@@ -1,1 +1,1 @@
-print("Hello from Moscow! Automation starts now.")
+print("hello python")
