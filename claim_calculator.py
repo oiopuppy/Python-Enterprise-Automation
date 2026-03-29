@@ -24,7 +24,6 @@ def main():
         # 知识点：输入校验。如果用户输入非数字，程序不崩溃（健壮性）
         raw_input = input("请输入报案账单金额: ")
         bill = float(raw_input)
-        
         # 调用核心算法
         result = calculate_insurance_payout(bill)
         
