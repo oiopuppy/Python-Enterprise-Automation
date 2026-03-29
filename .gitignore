@@ -23,7 +23,7 @@ wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
-*.egg
+*.eg
 MANIFEST
 
 # PyInstaller
@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# 黑名单：防止误传任何 Excel 或 CSV 到 GitHub
+*.xlsx
+*.xls
+*.csv
+
+# 白名单：只允许上传叫 'sample_data.xlsx' 的模拟文件作为演示
+!sample_data.xlsx
+!data/sample_data.xlsx
