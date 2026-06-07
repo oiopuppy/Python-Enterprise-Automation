@@ -1,0 +1,127 @@
+[build-system]
+requires = ["setuptools>=64.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insurance-audit"
+version = "2.0.0"
+description = "企业级保险理赔数据自动化审计系统 — China Life Insurance Claim Audit Enterprise Edition"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+
+authors = [
+    {name = "Senior Developer Team", email = "dev@example.com"},
+]
+
+keywords = [
+    "insurance", "audit", "enterprise", "automation",
+    "理赔审计", "央企", "自动化对账",
+]
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Accounting",
+    "Topic :: Office/Business :: Financial :: Insurance",
+]
+
+dependencies = [
+    "pandas>=2.1.0",
+    "openpyxl>=3.1.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+    "pyyaml>=6.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "mypy>=1.7.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.5.0",
+    "coverage>=7.3.0",
+    "hypothesis>=6.92.0",
+]
+
+prod = [
+    "gunicorn>=21.0",
+    "supervisor>=4.2",
+]
+
+[project.scripts]
+insurance-audit = "insurance_audit.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["insurance_audit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-config",
+    "--strict-markers",
+    "-p no:cacheprovider",
+]
+markers = [
+    "unit: Unit tests for individual components",
+    "integration: Integration tests across components",
+    "slow: Tests that take longer to run",
+    "smoke: Quick smoke tests for CI pipeline",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "S",   # bandit security
+    "B",   # bugbear
+    "SIM", # simplify
+    "ARG", # unused arguments
+]
+ignore = ["E501"]  # let black handle line length
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.coverage.run]
+source = ["insurance_audit"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]

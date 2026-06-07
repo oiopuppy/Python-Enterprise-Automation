@@ -1,8 +1,17 @@
 import pandas as pd
 import random
 import os
+import logging
 
-def generate_mock_claim_data(num_records=50, output_file='sample_claim_data.xlsx'):
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+def generate_mock_claim_data(num_records: int = 50, output_file: str = 'sample_claim_data.xlsx') -> pd.DataFrame | None:
     """
     生成模拟理赔账单数据
     :param num_records: 生成记录数量
@@ -47,16 +56,16 @@ def generate_mock_claim_data(num_records=50, output_file='sample_claim_data.xlsx
         # 保存为 Excel 文件
         df.to_excel(output_file, index=False)
 
-        print(f"✅ 成功生成 {num_records} 条模拟理赔数据：{output_file}")
-        print(f"📁 文件保存路径: {os.path.abspath(output_file)}")
+        logger.info(f"✅ 成功生成 {num_records} 条模拟理赔数据：{output_file}")
+        logger.info(f"📁 文件保存路径: {os.path.abspath(output_file)}")
 
         return df
 
     except ImportError:
-        print("❌ 错误：需要安装 pandas 库。运行 'pip install pandas openpyxl'")
+        logger.error("❌ 错误：需要安装 pandas 库。运行 'pip install pandas openpyxl'")
         return None
     except Exception as e:
-        print(f"❌ 生成数据时出错: {e}")
+        logger.error(f"❌ 生成数据时出错: {e}")
         return None
 
 if __name__ == "__main__":

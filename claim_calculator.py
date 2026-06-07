@@ -1,6 +1,14 @@
-import sys
+import logging
 
-def calculate_insurance_payout(bill_amount, deductible=500, ratio=0.8):
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+def calculate_insurance_payout(bill_amount: float, deductible: float = 500, ratio: float = 0.8) -> float:
     """
     核心业务逻辑：理赔金计算
     公式：应赔额 = (账单金额 - 免赔额) * 赔付比例
@@ -16,8 +24,8 @@ def calculate_insurance_payout(bill_amount, deductible=500, ratio=0.8):
     # 3. 结果返回（保留两位小数，符合财务规范）
     return round(payout, 2)
 
-def main():
-    print("--- 中国人寿理赔自动化核算原型 (v1.0) ---")
+def main() -> None:
+    logger.info("--- 中国人寿理赔自动化核算原型 (v1.0) ---")
     
     try:
         # 模拟用户输入数据
@@ -27,15 +35,15 @@ def main():
         # 调用核心算法
         result = calculate_insurance_payout(bill)
         
-        print(f"核算结果：")
-        print(f"- 原始账单: {bill} 元")
-        print(f"- 免赔额(固定): 500 元")
-        print(f"- 最终应赔付金额: {result} 元")
+        logger.info(f"核算结果：")
+        logger.info(f"- 原始账单: {bill} 元")
+        logger.info(f"- 免赔额(固定): 500 元")
+        logger.info(f"- 最终应赔付金额: {result} 元")
         
     except ValueError:
-        print("错误：请输入有效的数字金额！(数据类型非法)")
+        logger.error("错误：请输入有效的数字金额！(数据类型非法)")
     except Exception as e:
-        print(f"系统运行异常: {e}")
+        logger.error(f"系统运行异常: {e}")
 
 if __name__ == "__main__":
     # 知识点：冯·诺依曼架构中的“程序执行入口”

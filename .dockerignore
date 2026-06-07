@@ -1,0 +1,44 @@
+# =============================================================================
+# Docker 忽略文件
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# 不包含测试代码
+tests/
+
+# 不包含原始根目录脚本（已重构到 src/）
+china_life_automation.py
+claim_calculator.py
+create_mock_data.py
+test_rudn.py
+
+# 不包含文档源文件
+docs/
+
+# 不包含本地数据
+*.xlsx
+!sample_claim_data.xlsx
+*.csv
+
+# 不包含环境文件
+.env
+.venv
+venv/
+__pycache__/
+*.pyc
+
+# 不包含日志
+logs/
+reports/
+
+# 不包含开发工具配置
+pytest.ini
+.pre-commit-config.yaml
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/

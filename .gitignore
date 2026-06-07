@@ -209,7 +209,8 @@ __marimo__/
 *.xlsx
 *.xls
 *.csv
+final_settlement_report.xlsx
 
-# 白名单：只允许上传叫 'sample_data.xlsx' 的模拟文件作为演示
-!sample_data.xlsx
-!data/sample_data.xlsx
+# 白名单：只允许上传叫 'sample_claim_data.xlsx' 的模拟文件作为演示
+!sample_claim_data.xlsx
+!data/sample_claim_data.xlsx
