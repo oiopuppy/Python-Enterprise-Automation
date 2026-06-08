@@ -113,7 +113,8 @@ def batch_calculate(records: list[ClaimRecord]) -> list[ClaimRecord]:
             logger.error(
                 f"计算失败 — 保单 {record.policy_id}: {e}"
             )
-            record.calculated_payout = Decimal("0.00")
+            record.calculated_payout = None
+            record.audit_status = f"计算失败: {type(e).__name__}"
 
     logger.info(
         f"批量计算完成: 成功={processed}, 失败={errors}"

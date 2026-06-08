@@ -25,6 +25,7 @@ from insurance_audit.data.writer import write_excel
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import (
     DataException,
+    FileNotFoundError,
     InsuranceAuditError,
     SecurityException,
     SystemException,
@@ -83,7 +84,14 @@ def run_audit() -> int:
     # --- 2a. 读取数据 ---
     logger.info("\n📂 [阶段 1/4] 读取数据文件...")
     input_path = settings.data.input_path
-    df = read_excel(str(input_path))
+    try:
+        df = read_excel(str(input_path))
+    except FileNotFoundError:
+        raise DataException(f"数据文件不存在: {input_path}")
+    except ValueError as e:
+        raise DataException(f"Excel 内容解析失败: {e}")
+    except Exception as e:
+        raise SystemException(f"读取Excel失败: {e}")
     audit_logger.safe_log(
         "DATA_LOADED",
         f"从 {input_path.name} 读取 {len(df)} 条记录",

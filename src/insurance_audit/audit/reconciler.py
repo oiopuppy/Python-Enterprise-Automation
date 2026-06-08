@@ -29,6 +29,22 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     Returns:
         (标注后的 DataFrame, 审计摘要)
     """
+    # 空DataFrame前置检查
+    if df.empty:
+        logger.warning("输入DataFrame为空，无数据可对账")
+        empty_summary = AuditSummary(
+            total_records=0,
+            matched_records=0,
+            unmatched_records=0,
+            match_rate=0.0,
+            total_claim_amount=Decimal("0.00"),
+            total_actual_payout=Decimal("0.00"),
+            total_calculated_payout=Decimal("0.00"),
+            total_discrepancy=Decimal("0.00"),
+            details=[],
+        )
+        return df, empty_summary
+
     logger.info(f"开始自动对账，共 {len(df)} 条记录")
 
     # 转换 DataFrame 为 ClaimRecord 列表

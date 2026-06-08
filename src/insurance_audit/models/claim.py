@@ -23,7 +23,6 @@ class ClaimRecord(BaseModel):
     policy_id: str = Field(
         ..., alias="保单号",
         description="保单编号，格式：CL9900XXX",
-        pattern=r"^CL\d{7}$",
     )
     customer_name: str = Field(
         ..., alias="客户姓名", max_length=50,
@@ -69,6 +68,21 @@ class ClaimRecord(BaseModel):
             if d.as_tuple().exponent < -2:
                 raise ValueError(f"金额精度超过2位小数: {value}")
         return value
+
+    @field_validator("policy_id", mode="before")
+    @classmethod
+    def validate_policy_id(cls, value: object) -> object:
+        """根据配置中的前缀验证保单号格式"""
+        raw = str(value).strip()
+        prefix = settings.insurance.policy_prefix
+        if not raw.startswith(prefix):
+            raise ValueError(f"保单号必须以 '{prefix}' 开头: {raw}")
+        suffix = raw[len(prefix):]
+        if not suffix or not suffix.isdigit():
+            raise ValueError(
+                f"保单号前缀后的部分必须全是数字: {raw}"
+            )
+        return raw
 
     @model_validator(mode="after")
     def validate_business_rules(self) -> "ClaimRecord":
