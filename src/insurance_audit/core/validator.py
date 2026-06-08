@@ -14,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 
+from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import (
     DataValidationError,
     InvalidColumnError,
@@ -113,8 +114,8 @@ def validate_row(
 
     # 4. 保单号格式校验
     policy_id = str(data.get("保单号", ""))
-    if not policy_id.startswith("CL"):
-        return False, f"第{row_num}行 [保单号] = {policy_id} 格式异常（应以CL开头）"
+    if not policy_id.startswith(settings.insurance.policy_prefix):
+        return False, f"第{row_num}行 [保单号] = {policy_id} 格式异常（应以{settings.insurance.policy_prefix}开头）"
 
     return True, ""
 

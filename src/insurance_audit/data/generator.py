@@ -61,10 +61,10 @@ def generate_mock_data(
         records.append({
             "保单号": policy_id,
             "客户姓名": customer_name,
-            "报案金额": float(claim_amount),
-            "免赔额": float(deductible),
-            "赔付比例": float(ratio),
-            "实际赔付金额": float(actual_payout),
+            "报案金额": str(claim_amount),
+            "免赔额": str(deductible),
+            "赔付比例": str(ratio),
+            "实际赔付金额": str(actual_payout),
         })
 
     df = pd.DataFrame(records)

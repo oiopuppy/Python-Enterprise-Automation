@@ -60,6 +60,9 @@ class InsuranceConfig:
             os.getenv("INSURANCE_ANNUAL_LIMIT", "500000")
         )
     )
+    policy_prefix: str = field(
+        default_factory=lambda: os.getenv("INSURANCE_POLICY_PREFIX", "CL")
+    )
 
     def __post_init__(self) -> None:
         """验证配置合法性"""
@@ -69,6 +72,8 @@ class InsuranceConfig:
             raise ConfigurationError("赔付比例必须在0~1之间", "INSURANCE_DEFAULT_RATIO")
         if self.decimal_places < 0 or self.decimal_places > 10:
             raise ConfigurationError("小数位数必须在0~10之间", "INSURANCE_DECIMAL_PLACES")
+        if not self.policy_prefix:
+            raise ConfigurationError("保单前缀不能为空", "INSURANCE_POLICY_PREFIX")
 
 
 @dataclass(frozen=True)
@@ -114,6 +119,9 @@ class LogConfig:
     audit_log_file: str = field(
         default_factory=lambda: os.getenv("AUDIT_LOG_FILE", "logs/audit_trail.log")
     )
+    audit_enabled: bool = field(
+        default_factory=lambda: os.getenv("AUDIT_ENABLED", "true").lower() == "true"
+    )
 
     @property
     def log_path(self) -> Path:
@@ -143,6 +151,12 @@ class AppConfig:
     )
     debug: bool = field(
         default_factory=lambda: os.getenv("APP_DEBUG", "true").lower() == "true"
+    )
+    secret_key: str = field(
+        default_factory=lambda: os.getenv("SECRET_KEY", "change-me-in-production")
+    )
+    data_encryption_enabled: bool = field(
+        default_factory=lambda: os.getenv("ENABLE_DATA_ENCRYPTION", "false").lower() == "true"
     )
 
     @property

@@ -61,6 +61,10 @@ class AuditLogger:
         self._logger.setLevel(logging.INFO)
         self._logger.handlers.clear()
 
+        # 检查审计功能是否启用
+        if not settings.log.audit_enabled:
+            return
+
         # 只写入文件，不输出控制台
         handler = RotatingFileHandler(
             filename=str(settings.log.audit_log_path),
@@ -77,6 +81,15 @@ class AuditLogger:
     def log(self, action: str, detail: str, user: str = "SYSTEM") -> None:
         """记录审计事件"""
         self._logger.info(f"{user} | {action} | {detail}")
+
+    def safe_log(self, action: str, detail: str, user: str = "SYSTEM") -> None:
+        """安全记录审计事件，失败时不中断主流程"""
+        try:
+            self.log(action, detail, user)
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                f"审计日志写入失败 [{action}]: {e}"
+            )
 
 
 # =============================================================================

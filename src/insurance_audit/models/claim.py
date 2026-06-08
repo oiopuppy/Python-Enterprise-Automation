@@ -13,6 +13,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from insurance_audit.utils.config import settings
+
 
 class ClaimRecord(BaseModel):
     """单条理赔记录模型"""
@@ -97,7 +99,8 @@ class ClaimRecord(BaseModel):
         """
         calculated = self.calculate_payout()
         diff = abs(calculated - self.actual_payout)
-        is_match = diff < Decimal("0.005")  # 0.005元以内的舍入差异算一致
+        tolerance = Decimal(10) ** (-settings.insurance.decimal_places - 1)
+        is_match = diff < tolerance
         self.calculated_payout = calculated
         self.audit_status = "一致" if is_match else "异常"
         return is_match, diff

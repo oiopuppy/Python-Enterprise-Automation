@@ -80,7 +80,8 @@ def calculate_payout(
         return Decimal("0.00")
 
     payout = (claim_amount - deductible) * ratio
-    result = payout.quantize(Decimal("0.01"), rounding="ROUND_HALF_UP")
+    precision = Decimal(10) ** -settings.insurance.decimal_places
+    result = payout.quantize(precision, rounding="ROUND_HALF_UP")
 
     logger.debug(
         f"赔付计算: 报案={claim_amount} 免赔={deductible} "

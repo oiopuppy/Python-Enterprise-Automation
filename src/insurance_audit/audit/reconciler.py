@@ -80,12 +80,12 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
         detail_rows.append({
             "保单号": record.policy_id,
             "客户姓名": record.customer_name,
-            "报案金额": float(record.claim_amount),
-            "免赔额": float(record.deductible),
-            "赔付比例": float(record.payout_ratio),
-            "原始赔付金额": float(record.actual_payout),
-            "系统核算金额": float(record.calculated_payout or 0),
-            "差异金额": float(diff),
+            "报案金额": str(record.claim_amount),
+            "免赔额": str(record.deductible),
+            "赔付比例": str(record.payout_ratio),
+            "原始赔付金额": str(record.actual_payout),
+            "系统核算金额": str(record.calculated_payout or Decimal("0.00")),
+            "差异金额": str(diff),
             "审计状态": record.audit_status or "",
         })
 
