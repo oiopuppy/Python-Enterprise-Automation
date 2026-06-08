@@ -39,6 +39,11 @@ jobs:
       - name: MyPy 类型检查
         run: mypy --strict src/ --ignore-missing-imports
 
+      - name: 安装 & 运行 Pre-commit
+        run: |
+          pip install pre-commit
+          pre-commit run --all-files || true
+
   test:
     name: 🧪 测试套件
     needs: lint

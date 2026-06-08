@@ -8,6 +8,7 @@
 """
 
 from pathlib import Path
+from typing import Union
 
 import pandas as pd
 
@@ -17,7 +18,7 @@ from insurance_audit.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def read_excel(file_path: str | Path) -> pd.DataFrame:
+def read_excel(file_path: Union[str, Path]) -> pd.DataFrame:
     """
     读取Excel数据文件
     

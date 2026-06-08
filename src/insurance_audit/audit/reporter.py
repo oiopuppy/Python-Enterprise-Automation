@@ -10,6 +10,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Union
 
 import pandas as pd
 
@@ -22,7 +23,7 @@ logger = get_logger(__name__)
 def generate_report(
     detail_df: pd.DataFrame,
     summary: AuditSummary,
-    output_path: str | Path,
+    output_path: Union[str, Path],
 ) -> Path:
     """
     生成完整的审计报告 Excel 文件（多Sheet）

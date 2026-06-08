@@ -76,9 +76,11 @@ insurance-audit --generate-mock
 # 使用已有数据执行审计
 insurance-audit
 
-# 或直接执行模块
-python -m insurance_audit.main --generate-mock
-python -m insurance_audit.main
+# 支持 python -m 直接执行
+python -m insurance_audit --generate-mock
+python -m insurance_audit
+
+# 或单独生成数据
 python -m insurance_audit.data.generator
 ```
 

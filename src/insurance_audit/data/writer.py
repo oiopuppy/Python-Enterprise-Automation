@@ -8,6 +8,7 @@
 """
 
 from pathlib import Path
+from typing import Union
 
 import pandas as pd
 
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 
 def write_excel(
     df: pd.DataFrame,
-    output_path: str | Path,
+    output_path: Union[str, Path],
     sheet_name: str = "审计结果",
 ) -> Path:
     """

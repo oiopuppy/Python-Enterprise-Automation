@@ -13,6 +13,8 @@ from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.logger import get_logger
 
+from typing import Optional
+
 import pandas as pd
 
 logger = get_logger(__name__)
@@ -29,12 +31,12 @@ class AuditEngine:
 
     def __init__(
         self,
-        input_file: str | None = None,
-        output_file: str | None = None,
+        input_file: Optional[str] = None,
+        output_file: Optional[str] = None,
     ) -> None:
         self.input_file = input_file or str(settings.data.input_path)
         self.output_file = output_file or str(settings.data.output_path)
-        self.summary: AuditSummary | None = None
+        self.summary: Optional[AuditSummary] = None
 
     def run(self) -> AuditSummary:
         """

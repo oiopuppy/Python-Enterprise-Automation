@@ -16,8 +16,3 @@ __version__ = "2.0.0"
 __app_name__ = "保险理赔审计系统"
 __description__ = "Enterprise-grade insurance claim data audit automation system"
 __author__ = "Senior Developer Team"
-
-from insurance_audit.utils.logger import get_logger
-
-logger = get_logger(__name__)
-logger.info(f"{__app_name__} v{__version__} loaded — 企业级审计引擎就绪")
