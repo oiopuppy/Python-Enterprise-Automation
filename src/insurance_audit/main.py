@@ -12,6 +12,7 @@ Enterprise Insurance Claim Audit System — Entry Point
 7. 审计追溯
 """
 
+import argparse
 import sys
 from decimal import Decimal
 
@@ -168,17 +169,34 @@ def main() -> None:
     """
     系统主入口
 
-    执行流程：健康检查 -> 审计执行 -> 清理关闭 -> 退出
+    支持CLI参数：
+      insurance-audit                    # 执行审计
+      insurance-audit --generate-mock    # 生成模拟数据后执行审计
     """
+    parser = argparse.ArgumentParser(
+        prog="insurance-audit",
+        description=f"{__app_name__} v{__version__} — 保险理赔数据自动化审计系统",
+    )
+    parser.add_argument(
+        "--generate-mock",
+        action="store_true",
+        help="首先生成模拟数据，再执行审计流程",
+    )
+    args = parser.parse_args()
+
     logger.info(f"{__app_name__} v{__version__} 启动")
 
     exit_code = 0
 
     try:
+        if args.generate_mock:
+            logger.info("\n📦 正在生成模拟理赔数据...")
+            generate_mock_data()
+            logger.info("")
+
         if not check_environment():
             logger.info("\n💡 提示: 先运行模拟数据生成器...")
-            logger.info("   python -m insurance_audit.data.generator")
-            logger.info("   或:  insurance-audit --generate-mock")
+            logger.info("   insurance-audit --generate-mock")
             exit_code = 1
             return
 

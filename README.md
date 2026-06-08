@@ -70,11 +70,16 @@ cp .env.example .env
 ### 运行
 
 ```bash
-# 生成模拟数据
-python -m insurance_audit.data.generator
+# 生成模拟数据并执行审计（推荐）
+insurance-audit --generate-mock
 
-# 执行审计
+# 使用已有数据执行审计
+insurance-audit
+
+# 或直接执行模块
+python -m insurance_audit.main --generate-mock
 python -m insurance_audit.main
+python -m insurance_audit.data.generator
 ```
 
 ---
@@ -127,6 +132,9 @@ docker run --rm \
 | `INSURANCE_DEFAULT_DEDUCTIBLE` | `500` | 默认免赔额（元） |
 | `INSURANCE_DEFAULT_RATIO` | `0.80` | 默认赔付比例 |
 | `INSURANCE_ANNUAL_LIMIT` | `500000` | 年度赔付上限（元） |
+| `INSURANCE_POLICY_PREFIX` | `CL` | 保单号前缀 |
+| `INSURANCE_MIN_CLAIM_AMOUNT` | `0.01` | 最小报案金额（元） |
+| `INSURANCE_MAX_CLAIM_AMOUNT` | `99999999.99` | 最大报案金额（元） |
 | `DATA_INPUT_FILE` | `sample_claim_data.xlsx` | 输入数据文件 |
 | `DATA_OUTPUT_FILE` | `final_settlement_report.xlsx` | 输出报告文件名 |
 

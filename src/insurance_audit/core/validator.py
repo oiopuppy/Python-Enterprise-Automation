@@ -38,7 +38,10 @@ MONEY_COLUMNS = {"报案金额", "免赔额", "实际赔付金额"}
 
 # 数值范围约束
 COLUMN_CONSTRAINTS: dict[str, dict[str, Any]] = {
-    "报案金额": {"min": Decimal("0.01"), "max": Decimal("99999999.99")},
+    "报案金额": {
+        "min": settings.insurance.min_claim_amount,
+        "max": settings.insurance.max_claim_amount,
+    },
     "免赔额": {"min": Decimal("0"), "max": Decimal("99999999.99")},
     "赔付比例": {"min": Decimal("0"), "max": Decimal("1")},
     "实际赔付金额": {"min": Decimal("0"), "max": Decimal("99999999.99")},

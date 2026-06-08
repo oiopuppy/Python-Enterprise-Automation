@@ -63,6 +63,16 @@ class InsuranceConfig:
     policy_prefix: str = field(
         default_factory=lambda: os.getenv("INSURANCE_POLICY_PREFIX", "CL")
     )
+    min_claim_amount: Decimal = field(
+        default_factory=lambda: Decimal(
+            os.getenv("INSURANCE_MIN_CLAIM_AMOUNT", "0.01")
+        )
+    )
+    max_claim_amount: Decimal = field(
+        default_factory=lambda: Decimal(
+            os.getenv("INSURANCE_MAX_CLAIM_AMOUNT", "99999999.99")
+        )
+    )
 
     def __post_init__(self) -> None:
         """验证配置合法性"""
@@ -74,6 +84,13 @@ class InsuranceConfig:
             raise ConfigurationError("小数位数必须在0~10之间", "INSURANCE_DECIMAL_PLACES")
         if not self.policy_prefix:
             raise ConfigurationError("保单前缀不能为空", "INSURANCE_POLICY_PREFIX")
+        if self.min_claim_amount <= Decimal("0"):
+            raise ConfigurationError("最小报案金额必须大于0", "INSURANCE_MIN_CLAIM_AMOUNT")
+        if self.max_claim_amount <= self.min_claim_amount:
+            raise ConfigurationError(
+                "最大报案金额必须大于最小报案金额",
+                "INSURANCE_MAX_CLAIM_AMOUNT",
+            )
 
 
 @dataclass(frozen=True)
