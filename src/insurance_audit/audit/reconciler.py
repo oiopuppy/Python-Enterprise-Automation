@@ -60,9 +60,13 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
                 actual_payout=Decimal(str(row["实际赔付金额"])),
             )
             records.append(record)
-        except Exception as e:
+        except ValueError as e:  # 数据格式错误
             parse_errors += 1
-            logger.warning(f"第 {idx + 2} 行解析失败: {e}")
+            logger.warning(f"第 {idx + 2} 行数据格式错误: {e}")
+        except Exception as e:  # 其他系统异常
+            parse_errors += 1
+            logger.error(f"第 {idx + 2} 行解析异常: {e}")
+            raise
 
     if parse_errors:
         logger.warning(f"解析失败 {parse_errors} 条记录，已跳过")

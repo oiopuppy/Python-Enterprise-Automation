@@ -113,7 +113,7 @@ class ClaimRecord(BaseModel):
         """
         calculated = self.calculate_payout()
         diff = abs(calculated - self.actual_payout)
-        tolerance = Decimal(10) ** (-settings.insurance.decimal_places - 1)
+        tolerance = Decimal(10) ** -settings.insurance.decimal_places
         is_match = diff < tolerance
         self.calculated_payout = calculated
         self.audit_status = "一致" if is_match else "异常"

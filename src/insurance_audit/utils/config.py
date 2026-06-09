@@ -82,8 +82,11 @@ class InsuranceConfig:
             raise ConfigurationError("赔付比例必须在0~1之间", "INSURANCE_DEFAULT_RATIO")
         if self.decimal_places < 0 or self.decimal_places > 10:
             raise ConfigurationError("小数位数必须在0~10之间", "INSURANCE_DECIMAL_PLACES")
-        if not self.policy_prefix:
-            raise ConfigurationError("保单前缀不能为空", "INSURANCE_POLICY_PREFIX")
+        if not self.policy_prefix or not self.policy_prefix.strip():
+            raise ConfigurationError(
+                "保单前缀不能为空或仅空格",
+                "INSURANCE_POLICY_PREFIX"
+            )
         if self.min_claim_amount <= Decimal("0"):
             raise ConfigurationError("最小报案金额必须大于0", "INSURANCE_MIN_CLAIM_AMOUNT")
         if self.max_claim_amount <= self.min_claim_amount:
