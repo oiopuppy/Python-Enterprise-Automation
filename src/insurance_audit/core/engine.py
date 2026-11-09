@@ -51,14 +51,19 @@ class AuditEngine:
         # 2. 数据校验
         validation_errors = validate_dataframe(df)
         if validation_errors:
-            logger.warning(f"数据校验发现 {len(validation_errors)} 个问题，继续执行")
+            logger.warning(f"数据校验发现 {len(validation_errors)} 个问题，已写入报告")
 
         # 3. 执行对账
         result_df, summary = reconcile_dataframe(df)
         self.summary = summary
 
         # 4. 生成报告
-        generate_report(result_df, summary, self.output_file)
+        generate_report(
+            result_df,
+            summary,
+            self.output_file,
+            validation_errors=validation_errors,
+        )
 
         logger.info("审计引擎工作流完成")
         return summary

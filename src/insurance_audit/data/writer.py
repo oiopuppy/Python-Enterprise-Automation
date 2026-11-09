@@ -18,6 +18,15 @@ from insurance_audit.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def auto_adjust_column_width(writer: pd.ExcelWriter) -> None:
+    """按列内最长内容调整所有 Sheet 的列宽（上限 50 字符）"""
+    for sheet_name in writer.sheets:
+        worksheet = writer.sheets[sheet_name]
+        for column in worksheet.columns:
+            max_length = max(len(str(cell.value or "")) for cell in column)
+            worksheet.column_dimensions[column[0].column_letter].width = min(max_length + 4, 50)
+
+
 def write_excel(
     df: pd.DataFrame,
     output_path: Union[str, Path],
@@ -51,13 +60,7 @@ def write_excel(
             engine="openpyxl",
         ) as writer:
             df.to_excel(writer, sheet_name=sheet_name, index=False)
-
-            # 自动调整列宽
-            worksheet = writer.sheets[sheet_name]
-            for column in worksheet.columns:
-                max_length = max(len(str(cell.value or "")) for cell in column)
-                adjusted_width = min(max_length + 4, 50)
-                worksheet.column_dimensions[column[0].column_letter].width = adjusted_width
+            auto_adjust_column_width(writer)
 
         abs_path = path.absolute()
         size_kb = path.stat().st_size / 1024

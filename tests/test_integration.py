@@ -66,10 +66,10 @@ class TestIntegrationAuditPipeline:
 
     @pytest.mark.integration
     def test_full_pipeline(self, tmp_path: Path) -> None:
-        """生成 -> 对账 -> 报告"""
-        # 1. 生成数据
+        """生成 -> 对账 -> 报告（不注入差异，验证全部一致路径）"""
+        # 1. 生成数据（anomaly_ratio=0 时用同一算法生成，必然全部一致）
         input_file = str(tmp_path / "input.xlsx")
-        generate_mock_data(num_records=20, output_file=input_file)
+        generate_mock_data(num_records=20, output_file=input_file, anomaly_ratio=0.0)
 
         # 2. 执行审计
         output_file = str(tmp_path / "output.xlsx")
@@ -77,9 +77,67 @@ class TestIntegrationAuditPipeline:
         summary = engine.run()
 
         # 3. 验证
+        assert summary.source_records == 20
         assert summary.total_records == 20
-        assert summary.matched_records == 20  # 全一致（用同一算法生成）
+        assert summary.parse_error_records == 0
+        assert summary.matched_records == 20
         assert summary.match_rate == 100.0
+
+    @pytest.mark.integration
+    def test_full_pipeline_with_injected_anomalies(self, tmp_path: Path) -> None:
+        """默认注入差异时，审计必须能真的发现异常，而不是永远 100% 一致"""
+        input_file = str(tmp_path / "input.xlsx")
+        generate_mock_data(num_records=20, output_file=input_file, anomaly_ratio=1.0, seed=42)
+
+        output_file = str(tmp_path / "output.xlsx")
+        summary = AuditEngine(input_file=input_file, output_file=output_file).run()
+
+        assert summary.source_records == 20
+        assert summary.total_records == 20
+        # 0 赔付的记录没有可注入的差异，所以是「绝大多数」而非全部
+        assert summary.unmatched_records >= 15
+        assert summary.matched_records + summary.unmatched_records == 20
+        assert summary.match_rate < 50.0
+
+    @pytest.mark.integration
+    def test_pipeline_records_parse_errors(self, tmp_path: Path) -> None:
+        """无法解析的行不能静默消失：行数要可核对，报告里要有「解析失败」"""
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100", "ABC123"],  # 第二条保单号非法
+                "客户姓名": ["张三", "李四"],
+                "报案金额": [1000.0, 2000.0],
+                "免赔额": [500.0, 500.0],
+                "赔付比例": [0.80, 0.80],
+                "实际赔付金额": [400.0, 1200.0],
+            }
+        )
+        input_file = str(tmp_path / "parse_error_input.xlsx")
+        df.to_excel(input_file, index=False)
+
+        output_file = str(tmp_path / "parse_error_output.xlsx")
+        summary = AuditEngine(input_file=input_file, output_file=output_file).run()
+
+        # 行数必须可核对：读取 2 = 解析成功 1 + 解析失败 1
+        assert summary.source_records == 2
+        assert summary.total_records == 1
+        assert summary.parse_error_records == 1
+        assert summary.matched_records + summary.unmatched_records == summary.total_records
+        assert summary.parse_errors[0]["policy_id"] == "ABC123"
+        assert summary.parse_errors[0]["row"] == 3
+
+        # 异常 Sheet 里要能看到解析失败的那一行
+        anomaly_df = pd.read_excel(output_file, sheet_name="异常数据")
+        assert "解析失败" in set(anomaly_df["审计状态"])
+        assert "ABC123" in set(anomaly_df["保单号"])
+
+        # 摘要 Sheet 里要有可核对的行数
+        summary_df = pd.read_excel(output_file, sheet_name="审计摘要")
+        items = dict(zip(summary_df["审计项目"], summary_df["数值"]))
+        assert items["读取总行数"] == 2
+        assert items["无法解析"] == 1
 
     @pytest.mark.integration
     def test_pipeline_with_mismatches(self, tmp_path: Path) -> None:

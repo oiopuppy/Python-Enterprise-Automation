@@ -2,41 +2,95 @@
 审计报告生成器 — Audit Report Generator
 
 生成结构化审计报告，包括：
-1. 详细对账结果
-2. 审计摘要
-3. 异常数据明细
-4. 统计汇总
+1. 审计摘要（含数据完整性统计）
+2. 详细对账结果
+3. 异常数据明细（含无法解析的行）
+4. 数据质量问题（字段级校验结果）
 """
 
 from datetime import datetime
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import pandas as pd
 
+from insurance_audit.audit.reconciler import PARSE_ERROR_STATUS
+from insurance_audit.data.writer import auto_adjust_column_width
 from insurance_audit.models.claim import AuditSummary
+from insurance_audit.utils.exceptions import DataValidationError
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 视为异常、需要人工复核的审计状态
+ANOMALY_STATUSES = ("异常", PARSE_ERROR_STATUS)
+
+
+def _build_summary_rows(summary: AuditSummary) -> list[tuple[str, object, str]]:
+    """构造审计摘要的三列表格：项目 / 数值 / 单位"""
+    return [
+        ("审计时间", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ""),
+        ("读取总行数", summary.source_records, "条"),
+        ("成功解析", summary.total_records, "条"),
+        ("无法解析", summary.parse_error_records, "条"),
+        ("一致记录数", summary.matched_records, "条"),
+        ("异常记录数", summary.unmatched_records, "条"),
+        ("一致率", summary.match_rate, "%"),
+        ("总报案金额", float(summary.total_claim_amount), "元"),
+        ("总原始赔付", float(summary.total_actual_payout), "元"),
+        ("总系统核算", float(summary.total_calculated_payout), "元"),
+        ("总差异金额", float(summary.total_discrepancy), "元"),
+    ]
+
+
+def _build_quality_rows(
+    validation_errors: list[DataValidationError],
+    summary: AuditSummary,
+) -> list[dict[str, object]]:
+    """构造数据质量问题明细：字段级校验错误 + 无法解析记录"""
+    rows: list[dict[str, object]] = []
+    for err in validation_errors:
+        details = err.details or {}
+        rows.append(
+            {
+                "问题类型": "字段校验",
+                "行号": details.get("row_index", ""),
+                "字段": details.get("field", ""),
+                "原因": details.get("reason", str(err)),
+            }
+        )
+    for parse_err in summary.parse_errors:
+        rows.append(
+            {
+                "问题类型": "无法解析",
+                "行号": parse_err.get("row", ""),
+                "字段": "整行",
+                "原因": parse_err.get("reason", ""),
+            }
+        )
+    return rows
 
 
 def generate_report(
     detail_df: pd.DataFrame,
     summary: AuditSummary,
     output_path: Union[str, Path],
+    validation_errors: Optional[list[DataValidationError]] = None,
 ) -> Path:
     """
     生成完整的审计报告 Excel 文件（多Sheet）
 
     报告结构：
-    - Sheet 1: 审计摘要
-    - Sheet 2: 对账明细
-    - Sheet 3: 异常数据
+    - Sheet 1: 审计摘要（含读取/解析/对账行数，保证行数可核对）
+    - Sheet 2: 对账明细（解析失败的行也在内，状态为「解析失败」）
+    - Sheet 3: 异常数据（对账异常 + 解析失败）
+    - Sheet 4: 数据质量问题（字段级校验错误，可能为空）
 
     Args:
         detail_df: 对账明细 DataFrame
         summary: 审计摘要
         output_path: 输出文件路径
+        validation_errors: 可选的字段级校验错误列表
 
     Returns:
         输出文件的绝对路径
@@ -45,57 +99,51 @@ def generate_report(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Sheet 1: 审计摘要 ---
-    summary_data = {
-        "审计项目": [
-            "审计时间",
-            "数据总量",
-            "一致记录数",
-            "异常记录数",
-            "一致率",
-            "总报案金额",
-            "总原始赔付",
-            "总系统核算",
-            "总差异金额",
-        ],
-        "数值": [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            str(summary.total_records),
-            str(summary.matched_records),
-            str(summary.unmatched_records),
-            f"{summary.match_rate}%",
-            f"¥{summary.total_claim_amount:,.2f}",
-            f"¥{summary.total_actual_payout:,.2f}",
-            f"¥{summary.total_calculated_payout:,.2f}",
-            f"¥{summary.total_discrepancy:,.2f}",
-        ],
-    }
-    summary_df = pd.DataFrame(summary_data)
+    summary_rows = _build_summary_rows(summary)
+    summary_df = pd.DataFrame(
+        summary_rows,
+        columns=["审计项目", "数值", "单位"],
+    )
 
-    # --- Sheet 3: 异常数据 ---
-    if summary.unmatched_records > 0:
-        anomaly_df = detail_df[detail_df["审计状态"] == "异常"].copy()
+    # --- Sheet 2: 对账明细 ---
+    detail_sheet_df = detail_df
+
+    # --- Sheet 3: 异常数据（对账异常 + 解析失败）---
+    if "审计状态" in detail_df.columns:
+        anomaly_df = detail_df[detail_df["审计状态"].isin(ANOMALY_STATUSES)].copy()
     else:
-        anomaly_df = pd.DataFrame(columns=detail_df.columns)
+        anomaly_df = pd.DataFrame(columns=[*detail_df.columns, "审计状态"])
+
+    # --- Sheet 4: 数据质量问题 ---
+    quality_rows = _build_quality_rows(validation_errors or [], summary)
+    quality_df = pd.DataFrame(
+        quality_rows,
+        columns=["问题类型", "行号", "字段", "原因"],
+    )
 
     # --- 写入 Excel ---
-    with pd.ExcelWriter(
-        str(path.absolute()),
-        engine="openpyxl",
-    ) as writer:
+    with pd.ExcelWriter(str(path.absolute()), engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="审计摘要", index=False)
-        detail_df.to_excel(writer, sheet_name="对账明细", index=False)
+        detail_sheet_df.to_excel(writer, sheet_name="对账明细", index=False)
         anomaly_df.to_excel(writer, sheet_name="异常数据", index=False)
+        quality_df.to_excel(writer, sheet_name="数据质量问题", index=False)
+        auto_adjust_column_width(writer)
 
-        # 自动调整列宽（所有Sheet）
-        for sheet_name in writer.sheets:
-            worksheet = writer.sheets[sheet_name]
-            for column in worksheet.columns:
-                max_length = max(len(str(cell.value or "")) for cell in column)
-                worksheet.column_dimensions[column[0].column_letter].width = min(max_length + 4, 50)
+        # 摘要 Sheet：金额与百分比用 Excel 数字格式，保持可计算
+        summary_ws = writer.sheets["审计摘要"]
+        for offset, (_, _, unit) in enumerate(summary_rows):
+            cell = summary_ws.cell(row=offset + 2, column=2)
+            if unit == "元":
+                cell.number_format = "#,##0.00"
+            elif unit == "%":
+                cell.number_format = '0.00"%"'
 
     abs_path = path.absolute()
     size_kb = path.stat().st_size / 1024
     logger.info(f"审计报告已生成: {abs_path} ({size_kb:.1f} KB)")
-    logger.info(f"  报告包含 {len(detail_df)} 条明细 + {summary.unmatched_records} 条异常标记")
+    logger.info(
+        f"  报告包含 {len(detail_df)} 条明细（其中解析失败 {summary.parse_error_records} 条）"
+        f" + {len(anomaly_df)} 条异常 + {len(quality_df)} 条数据质量问题"
+    )
 
     return abs_path

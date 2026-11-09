@@ -115,6 +115,21 @@ def validate_row(
             f"第{row_num}行 [保单号] = {policy_id} 格式异常（应以{settings.insurance.policy_prefix}开头）",
         )
 
+    # 5. 跨字段业务规则（只作为数据质量提示，不阻断对账、不丢弃该行）
+    claim_amount = Decimal(str(data.get("报案金额", 0)))
+    deductible = Decimal(str(data.get("免赔额", 0)))
+    actual_payout = Decimal(str(data.get("实际赔付金额", 0)))
+    if actual_payout > claim_amount:
+        return (
+            False,
+            f"第{row_num}行 实际赔付金额 {actual_payout} 超过报案金额 {claim_amount}",
+        )
+    if claim_amount <= deductible and actual_payout != Decimal("0"):
+        return (
+            False,
+            f"第{row_num}行 报案金额未超过免赔额，实际赔付应为 0，实际为 {actual_payout}",
+        )
+
     return True, ""
 
 

@@ -11,7 +11,7 @@
 from decimal import Decimal
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from insurance_audit.utils.config import settings
 
@@ -90,14 +90,6 @@ class ClaimRecord(BaseModel):
             raise ValueError(f"保单号前缀后的部分必须全是数字: {raw}")
         return raw
 
-    @model_validator(mode="after")
-    def validate_business_rules(self) -> "ClaimRecord":
-        """跨字段业务规则验证"""
-        if self.claim_amount <= self.deductible:
-            # 低于免赔额时，赔付金额应为0
-            pass  # 业务逻辑上允许，不算模型错误
-        return self
-
     def calculate_payout(self) -> Decimal:
         """
         核心赔付计算逻辑
@@ -125,16 +117,19 @@ class ClaimRecord(BaseModel):
         self.audit_status = "一致" if is_match else "异常"
         return is_match, diff
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        json_encoders={Decimal: str},
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class AuditSummary(BaseModel):
     """审计结果摘要"""
 
-    total_records: int = 0
+    source_records: int = Field(default=0, description="从 Excel 读取到的总行数")
+    total_records: int = Field(default=0, description="成功解析并参与对账的记录数")
+    parse_error_records: int = Field(default=0, description="无法解析、被排除的对账记录数")
+    parse_errors: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="无法解析记录的明细（行号、保单号、原因）",
+    )
     matched_records: int = 0
     unmatched_records: int = 0
     match_rate: float = Field(default=0.0, ge=0.0, le=100.0)

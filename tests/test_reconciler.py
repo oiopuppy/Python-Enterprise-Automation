@@ -85,3 +85,29 @@ class TestReconcileDataFrame:
         _, summary = reconcile_dataframe(sample_dataframe)
         assert isinstance(summary, AuditSummary)
         assert isinstance(summary.total_discrepancy, Decimal)
+
+    @pytest.mark.unit
+    def test_parse_errors_are_tracked_not_dropped(self) -> None:
+        """解析失败的行要留痕，不能被静默丢掉"""
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100", "ABC123"],  # 第二条保单号非法
+                "客户姓名": ["张三", "李四"],
+                "报案金额": [1000.0, 2000.0],
+                "免赔额": [500.0, 500.0],
+                "赔付比例": [0.80, 0.80],
+                "实际赔付金额": [400.0, 1200.0],
+            }
+        )
+        result_df, summary = reconcile_dataframe(df)
+
+        assert summary.source_records == 2
+        assert summary.total_records == 1
+        assert summary.parse_error_records == 1
+        assert summary.parse_errors[0]["row"] == 3
+        assert summary.parse_errors[0]["policy_id"] == "ABC123"
+
+        # 对账明细里仍能看到这一行，状态为「解析失败」
+        parse_rows = result_df[result_df["审计状态"] == "解析失败"]
+        assert len(parse_rows) == 1
+        assert parse_rows.iloc[0]["保单号"] == "ABC123"
