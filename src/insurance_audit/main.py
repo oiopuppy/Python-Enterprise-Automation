@@ -1,6 +1,5 @@
 """
-保险理赔数据自动化审计系统 — 主入口
-Enterprise Insurance Claim Audit System — Entry Point
+保险理赔数据自动化审计工具 — 主入口
 
 工作流：
 1. 初始化日志
