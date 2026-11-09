@@ -1,9 +1,11 @@
 # =============================================================================
-# Pre-commit hooks — 央企代码质量门禁
+# Pre-commit hooks — 本地提交前的轻量检查
+# 重门禁（mypy 严格检查、pytest）在 CI 的 lint / test job 中执行，
+# 这里只放秒级、无环境依赖的检查，避免提交被拖慢。
 # =============================================================================
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
@@ -17,24 +19,8 @@ repos:
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.0
+    rev: v0.15.16
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.0
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          - pydantic
-          - pandas-stubs
-        args: [--strict, --ignore-missing-imports]
-
-  - repo: https://github.com/pytest-dev/pytest
-    rev: 7.4.0
-    hooks:
-      - id: pytest
-        args: [--cov=insurance_audit, --cov-report=term-missing, -x]
-        stages: [push]
