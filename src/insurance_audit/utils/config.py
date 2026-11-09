@@ -95,9 +95,13 @@ class DataConfig:
 
     @property
     def output_path(self) -> Path:
-        """获取输出文件的完整路径"""
+        """
+        获取输出文件的完整路径
+
+        这里不创建目录：路径解析应在只读环境（如 --help、环境检查）下也安全，
+        目录创建交给真正写文件的 I/O 层。
+        """
         base = _project_root / self.output_dir
-        base.mkdir(parents=True, exist_ok=True)
         return base / self.output_file
 
     @property
