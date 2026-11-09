@@ -5,6 +5,7 @@
 支持编程式调用 vs CLI 调用两种模式。
 """
 
+import time
 from typing import Optional
 
 from insurance_audit.audit.reconciler import reconcile_dataframe
@@ -44,6 +45,7 @@ class AuditEngine:
             审计摘要
         """
         logger.info("审计引擎启动 — 执行完整工作流")
+        started = time.perf_counter()
 
         # 1. 读取数据
         df = read_excel(self.input_file)
@@ -55,6 +57,7 @@ class AuditEngine:
 
         # 3. 执行对账
         result_df, summary = reconcile_dataframe(df)
+        summary.execution_time = f"{time.perf_counter() - started:.2f}s"
         self.summary = summary
 
         # 4. 生成报告

@@ -128,10 +128,15 @@ docker run --rm \
 ## 开发
 
 ```bash
-ruff check src/ tests/        # 静态检查
-ruff format --check src/ tests/
+ruff check src/ tests/ scripts/      # 静态检查
+ruff format --check src/ tests/ scripts/
 mypy --strict src/ --ignore-missing-imports
-pytest -q                      # 58 个用例
+pytest -q                            # 63 个用例
+
+# 文档与元数据检查（CI 里也会跑）
+python scripts/check_markdown_links.py
+python scripts/check_env_example.py
+python scripts/check_version_consistency.py
 ```
 
 CI（`.github/workflows/ci.yml`）按顺序跑：代码质量 → 安全扫描 → 测试矩阵（3.9 / 3.12）→ 构建。

@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增
+
+- `scripts/check_markdown_links.py`、`check_env_example.py`、`check_version_consistency.py`：文档死链、`.env.example` 变量覆盖、版本号一致性检查，CI 中与 ruff/mypy 一起跑。
+- `CONTRIBUTING.md`、`SECURITY.md`、`.editorconfig`。
+- `tests/test_doc_tools.py`：5 个负向用例，保证检查脚本本身能抓到问题。
+
+### 变更
+
+- CI 增加 `permissions: contents: read` 与 `concurrency`（同分支新推送取消旧流水线）；去掉 `paths-ignore`，纯文档提交也跑链接与模板检查。
+- `AuditSummary.execution_time` 现在记录对账阶段耗时（例如 `0.01s`），不再恒为空。
+
+### 测试
+
+- 用例总数 58 → 63。
+
 ## [2.0.0] - 2026-11-10
 
 v2 是对 v1 的重写：把「能跑」变成「结论可信、失败可见、能在真实环境跑」。命令行接口、配置项、报告结构相对 v1 均不兼容。
