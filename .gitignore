@@ -206,11 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 # 黑名单：防止误传任何 Excel 或 CSV 到 GitHub
+# 模拟数据由 `insurance-audit --generate-mock` 现场生成，不入库
 *.xlsx
 *.xls
 *.csv
 final_settlement_report.xlsx
-
-# 白名单：只允许上传叫 'sample_claim_data.xlsx' 的模拟文件作为演示
-!sample_claim_data.xlsx
-!data/sample_claim_data.xlsx

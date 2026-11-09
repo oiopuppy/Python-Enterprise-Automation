@@ -11,18 +11,20 @@ license = {text = "MIT"}
 requires-python = ">=3.9"
 
 authors = [
-    {name = "Senior Developer Team", email = "dev@example.com"},
+    {name = "oiopuppy"},
 ]
 
 keywords = [
     "insurance", "audit", "enterprise", "automation",
-    "理赔审计", "央企", "自动化对账",
+    "理赔审计", "自动化对账",
 ]
 
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business :: Financial :: Accounting",
@@ -46,11 +48,6 @@ dev = [
     "pre-commit>=3.5.0",
     "coverage>=7.3.0",
     "hypothesis>=6.92.0",
-]
-
-prod = [
-    "gunicorn>=21.0",
-    "supervisor>=4.2",
 ]
 
 [project.scripts]
