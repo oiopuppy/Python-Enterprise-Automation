@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 
 from insurance_audit.utils.exceptions import ConfigurationError
 
-
 # =============================================================================
 # 加载 .env 文件
 # =============================================================================
@@ -44,34 +43,23 @@ else:
 @dataclass(frozen=True)
 class InsuranceConfig:
     """保险业务参数配置"""
+
     default_deductible: Decimal = field(
-        default_factory=lambda: Decimal(
-            os.getenv("INSURANCE_DEFAULT_DEDUCTIBLE", "500")
-        )
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_DEFAULT_DEDUCTIBLE", "500"))
     )
     default_ratio: Decimal = field(
-        default_factory=lambda: Decimal(
-            os.getenv("INSURANCE_DEFAULT_RATIO", "0.80")
-        )
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_DEFAULT_RATIO", "0.80"))
     )
     decimal_places: int = int(os.getenv("INSURANCE_DECIMAL_PLACES", "2"))
     annual_limit: Decimal = field(
-        default_factory=lambda: Decimal(
-            os.getenv("INSURANCE_ANNUAL_LIMIT", "500000")
-        )
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_ANNUAL_LIMIT", "500000"))
     )
-    policy_prefix: str = field(
-        default_factory=lambda: os.getenv("INSURANCE_POLICY_PREFIX", "CL")
-    )
+    policy_prefix: str = field(default_factory=lambda: os.getenv("INSURANCE_POLICY_PREFIX", "CL"))
     min_claim_amount: Decimal = field(
-        default_factory=lambda: Decimal(
-            os.getenv("INSURANCE_MIN_CLAIM_AMOUNT", "0.01")
-        )
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_MIN_CLAIM_AMOUNT", "0.01"))
     )
     max_claim_amount: Decimal = field(
-        default_factory=lambda: Decimal(
-            os.getenv("INSURANCE_MAX_CLAIM_AMOUNT", "99999999.99")
-        )
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_MAX_CLAIM_AMOUNT", "99999999.99"))
     )
 
     def __post_init__(self) -> None:
@@ -83,10 +71,7 @@ class InsuranceConfig:
         if self.decimal_places < 0 or self.decimal_places > 10:
             raise ConfigurationError("小数位数必须在0~10之间", "INSURANCE_DECIMAL_PLACES")
         if not self.policy_prefix or not self.policy_prefix.strip():
-            raise ConfigurationError(
-                "保单前缀不能为空或仅空格",
-                "INSURANCE_POLICY_PREFIX"
-            )
+            raise ConfigurationError("保单前缀不能为空或仅空格", "INSURANCE_POLICY_PREFIX")
         if self.min_claim_amount <= Decimal("0"):
             raise ConfigurationError("最小报案金额必须大于0", "INSURANCE_MIN_CLAIM_AMOUNT")
         if self.max_claim_amount <= self.min_claim_amount:
@@ -99,15 +84,14 @@ class InsuranceConfig:
 @dataclass(frozen=True)
 class DataConfig:
     """数据文件配置"""
+
     input_file: str = field(
         default_factory=lambda: os.getenv("DATA_INPUT_FILE", "sample_claim_data.xlsx")
     )
     output_file: str = field(
         default_factory=lambda: os.getenv("DATA_OUTPUT_FILE", "final_settlement_report.xlsx")
     )
-    output_dir: str = field(
-        default_factory=lambda: os.getenv("DATA_OUTPUT_DIR", "reports")
-    )
+    output_dir: str = field(default_factory=lambda: os.getenv("DATA_OUTPUT_DIR", "reports"))
 
     @property
     def output_path(self) -> Path:
@@ -128,12 +112,9 @@ class DataConfig:
 @dataclass(frozen=True)
 class LogConfig:
     """日志配置"""
-    level: str = field(
-        default_factory=lambda: os.getenv("APP_LOG_LEVEL", "INFO").upper()
-    )
-    log_file: str = field(
-        default_factory=lambda: os.getenv("APP_LOG_FILE", "logs/audit.log")
-    )
+
+    level: str = field(default_factory=lambda: os.getenv("APP_LOG_LEVEL", "INFO").upper())
+    log_file: str = field(default_factory=lambda: os.getenv("APP_LOG_FILE", "logs/audit.log"))
     max_bytes: int = int(os.getenv("APP_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
     backup_count: int = int(os.getenv("APP_LOG_BACKUP_COUNT", "30"))
     audit_log_file: str = field(
@@ -163,15 +144,10 @@ class LogConfig:
 @dataclass(frozen=True)
 class AppConfig:
     """应用主配置"""
-    name: str = field(
-        default_factory=lambda: os.getenv("APP_NAME", "保险理赔审计系统")
-    )
-    env: str = field(
-        default_factory=lambda: os.getenv("APP_ENV", "development")
-    )
-    debug: bool = field(
-        default_factory=lambda: os.getenv("APP_DEBUG", "true").lower() == "true"
-    )
+
+    name: str = field(default_factory=lambda: os.getenv("APP_NAME", "保险理赔审计系统"))
+    env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development"))
+    debug: bool = field(default_factory=lambda: os.getenv("APP_DEBUG", "true").lower() == "true")
     secret_key: str = field(
         default_factory=lambda: os.getenv("SECRET_KEY", "change-me-in-production")
     )
@@ -196,7 +172,7 @@ class AppConfig:
 class Settings:
     """
     全局设置中心 — 单例模式
-    
+
     使用方式：
         from insurance_audit.utils.config import settings
         settings.insurance.default_deductible

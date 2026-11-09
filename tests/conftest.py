@@ -6,17 +6,16 @@
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Generator
 
 import pandas as pd
 import pytest
 
 from insurance_audit.models.claim import ClaimRecord
 
-
 # =============================================================================
 # 夹具：样本数据
 # =============================================================================
+
 
 @pytest.fixture
 def sample_records() -> list[ClaimRecord]:
@@ -52,27 +51,31 @@ def sample_records() -> list[ClaimRecord]:
 @pytest.fixture
 def sample_dataframe() -> pd.DataFrame:
     """样本 DataFrame — 用于对账等集成测试"""
-    return pd.DataFrame({
-        "保单号": ["CL9900100", "CL9900101", "CL9900102"],
-        "客户姓名": ["张三", "李四", "王五"],
-        "报案金额": [1000.0, 200.0, 5000.0],
-        "免赔额": [500.0, 500.0, 800.0],
-        "赔付比例": [0.80, 0.80, 0.85],
-        "实际赔付金额": [400.0, 0.0, 3570.0],
-    })
+    return pd.DataFrame(
+        {
+            "保单号": ["CL9900100", "CL9900101", "CL9900102"],
+            "客户姓名": ["张三", "李四", "王五"],
+            "报案金额": [1000.0, 200.0, 5000.0],
+            "免赔额": [500.0, 500.0, 800.0],
+            "赔付比例": [0.80, 0.80, 0.85],
+            "实际赔付金额": [400.0, 0.0, 3570.0],
+        }
+    )
 
 
 @pytest.fixture
 def temp_excel_file(tmp_path: Path) -> Path:
     """临时 Excel 文件 — 用于文件读写测试"""
-    df = pd.DataFrame({
-        "保单号": ["CL9900100"],
-        "客户姓名": ["测试用户"],
-        "报案金额": [1000.0],
-        "免赔额": [500.0],
-        "赔付比例": [0.80],
-        "实际赔付金额": [400.0],
-    })
+    df = pd.DataFrame(
+        {
+            "保单号": ["CL9900100"],
+            "客户姓名": ["测试用户"],
+            "报案金额": [1000.0],
+            "免赔额": [500.0],
+            "赔付比例": [0.80],
+            "实际赔付金额": [400.0],
+        }
+    )
     path = tmp_path / "test_data.xlsx"
     df.to_excel(str(path), index=False)
     return path

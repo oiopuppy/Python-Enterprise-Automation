@@ -52,8 +52,7 @@ class ClaimAmountExceedsLimitError(BusinessException):
         policy_id: str = "",
     ) -> None:
         super().__init__(
-            message=f"理赔金额 {amount} 元超过年度赔付上限 {limit} 元 "
-            f"(保单: {policy_id})",
+            message=f"理赔金额 {amount} 元超过年度赔付上限 {limit} 元 (保单: {policy_id})",
             error_code="BIZ-0101",
             details={
                 "amount": amount,
@@ -169,8 +168,7 @@ class DataValidationError(DataException):
         reason: str,
     ) -> None:
         super().__init__(
-            message=f"第 {row_index} 行数据校验失败: "
-            f"[{field}] = {value}, 原因: {reason}",
+            message=f"第 {row_index} 行数据校验失败: [{field}] = {value}, 原因: {reason}",
             error_code="DAT-0201",
             details={
                 "row_index": row_index,

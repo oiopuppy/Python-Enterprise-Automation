@@ -21,10 +21,10 @@ logger = get_logger(__name__)
 def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     """
     对账处理：逐行计算 -> 对比 -> 标注状态
-    
+
     Args:
         df: 输入数据 DataFrame（必须包含保单号、报案金额、免赔额、赔付比例、实际赔付金额列）
-    
+
     Returns:
         (标注后的 DataFrame, 审计摘要)
     """
@@ -51,13 +51,15 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     parse_errors = 0
     for idx, row in df.iterrows():
         try:
-            record = ClaimRecord(
-                policy_id=str(row["保单号"]),
-                customer_name=str(row["客户姓名"]),
-                claim_amount=Decimal(str(row["报案金额"])),
-                deductible=Decimal(str(row["免赔额"])),
-                payout_ratio=Decimal(str(row["赔付比例"])),
-                actual_payout=Decimal(str(row["实际赔付金额"])),
+            record = ClaimRecord.model_validate(
+                {
+                    "保单号": str(row["保单号"]),
+                    "客户姓名": str(row["客户姓名"]),
+                    "报案金额": Decimal(str(row["报案金额"])),
+                    "免赔额": Decimal(str(row["免赔额"])),
+                    "赔付比例": Decimal(str(row["赔付比例"])),
+                    "实际赔付金额": Decimal(str(row["实际赔付金额"])),
+                }
             )
             records.append(record)
         except ValueError as e:  # 数据格式错误
@@ -77,7 +79,7 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     total_discrepancy = Decimal("0.00")
     total_calculated = Decimal("0.00")
     total_actual = Decimal("0.00")
-    detail_rows: list[dict] = []
+    detail_rows: list[dict[str, str]] = []
 
     for record in records:
         is_match, diff = record.reconcile()
@@ -96,17 +98,19 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
                 f"差异={diff}"
             )
 
-        detail_rows.append({
-            "保单号": record.policy_id,
-            "客户姓名": record.customer_name,
-            "报案金额": str(record.claim_amount),
-            "免赔额": str(record.deductible),
-            "赔付比例": str(record.payout_ratio),
-            "原始赔付金额": str(record.actual_payout),
-            "系统核算金额": str(record.calculated_payout or Decimal("0.00")),
-            "差异金额": str(diff),
-            "审计状态": record.audit_status or "",
-        })
+        detail_rows.append(
+            {
+                "保单号": record.policy_id,
+                "客户姓名": record.customer_name,
+                "报案金额": str(record.claim_amount),
+                "免赔额": str(record.deductible),
+                "赔付比例": str(record.payout_ratio),
+                "原始赔付金额": str(record.actual_payout),
+                "系统核算金额": str(record.calculated_payout or Decimal("0.00")),
+                "差异金额": str(diff),
+                "审计状态": record.audit_status or "",
+            }
+        )
 
     # 构建结果 DataFrame
     result_df = pd.DataFrame(detail_rows)
@@ -116,12 +120,8 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
         total_records=len(records),
         matched_records=matched,
         unmatched_records=unmatched,
-        match_rate=round(
-            matched / len(records) * 100 if records else 0, 2
-        ),
-        total_claim_amount=sum(
-            r.claim_amount for r in records
-        ),
+        match_rate=round(matched / len(records) * 100 if records else 0, 2),
+        total_claim_amount=sum((r.claim_amount for r in records), start=Decimal("0.00")),
         total_actual_payout=total_actual,
         total_calculated_payout=total_calculated,
         total_discrepancy=total_discrepancy,

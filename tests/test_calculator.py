@@ -53,8 +53,7 @@ class TestCalculatePayout:
         """正常场景 — 各种参数组合"""
         result = calculate_payout(claim, deductible, ratio)
         assert result == expected, (
-            f"calculate_payout({claim}, {deductible}, {ratio}) "
-            f"= {result}, expected {expected}"
+            f"calculate_payout({claim}, {deductible}, {ratio}) = {result}, expected {expected}"
         )
 
     @pytest.mark.unit

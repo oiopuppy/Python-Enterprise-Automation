@@ -5,6 +5,8 @@
 支持编程式调用 vs CLI 调用两种模式。
 """
 
+from typing import Optional
+
 from insurance_audit.audit.reconciler import reconcile_dataframe
 from insurance_audit.audit.reporter import generate_report
 from insurance_audit.core.validator import validate_dataframe
@@ -13,17 +15,13 @@ from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.logger import get_logger
 
-from typing import Optional
-
-import pandas as pd
-
 logger = get_logger(__name__)
 
 
 class AuditEngine:
     """
     审计引擎 — 完整工作流支持
-    
+
     提供编程式调用：
         engine = AuditEngine()
         summary = engine.run()
@@ -41,7 +39,7 @@ class AuditEngine:
     def run(self) -> AuditSummary:
         """
         执行完整审计流程
-        
+
         Returns:
             审计摘要
         """
@@ -53,9 +51,7 @@ class AuditEngine:
         # 2. 数据校验
         validation_errors = validate_dataframe(df)
         if validation_errors:
-            logger.warning(
-                f"数据校验发现 {len(validation_errors)} 个问题，继续执行"
-            )
+            logger.warning(f"数据校验发现 {len(validation_errors)} 个问题，继续执行")
 
         # 3. 执行对账
         result_df, summary = reconcile_dataframe(df)

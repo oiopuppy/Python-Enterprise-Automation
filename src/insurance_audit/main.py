@@ -14,7 +14,6 @@ Enterprise Insurance Claim Audit System — Entry Point
 
 import argparse
 import sys
-from decimal import Decimal
 
 from insurance_audit import __app_name__, __version__
 from insurance_audit.audit.reconciler import reconcile_dataframe
@@ -22,7 +21,6 @@ from insurance_audit.audit.reporter import generate_report
 from insurance_audit.core.validator import validate_columns, validate_dataframe
 from insurance_audit.data.generator import generate_mock_data
 from insurance_audit.data.reader import read_excel
-from insurance_audit.data.writer import write_excel
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import (
     DataException,
@@ -40,10 +38,11 @@ logger = get_logger(__name__)
 # 阶段 1：环境健康检查
 # =============================================================================
 
+
 def check_environment() -> bool:
     """
     执行环境健康检查
-    
+
     检查项：
     - 数据文件是否存在
     - 日志目录是否可写
@@ -73,10 +72,11 @@ def check_environment() -> bool:
 # 阶段 2：审计执行
 # =============================================================================
 
+
 def run_audit() -> int:
     """
     执行完整的审计工作流
-    
+
     Returns:
         0 = 全部对账一致, 1 = 存在对账异常
     """
@@ -88,11 +88,11 @@ def run_audit() -> int:
     try:
         df = read_excel(str(input_path))
     except FileNotFoundError:
-        raise DataException(f"数据文件不存在: {input_path}")
+        raise DataException(f"数据文件不存在: {input_path}") from None
     except ValueError as e:
-        raise DataException(f"Excel 内容解析失败: {e}")
+        raise DataException(f"Excel 内容解析失败: {e}") from e
     except Exception as e:
-        raise SystemException(f"读取Excel失败: {e}")
+        raise SystemException(f"读取Excel失败: {e}") from e
     audit_logger.safe_log(
         "DATA_LOADED",
         f"从 {input_path.name} 读取 {len(df)} 条记录",
@@ -153,10 +153,7 @@ def run_audit() -> int:
     logger.info("=" * 60)
 
     if summary.unmatched_records > 0:
-        logger.warning(
-            f"[WARN] 发现 {summary.unmatched_records} 条对账异常，"
-            f"建议人工复核"
-        )
+        logger.warning(f"[WARN] 发现 {summary.unmatched_records} 条对账异常，建议人工复核")
 
     return 0 if summary.unmatched_records == 0 else 1
 
@@ -164,6 +161,7 @@ def run_audit() -> int:
 # =============================================================================
 # 主入口
 # =============================================================================
+
 
 def main() -> None:
     """

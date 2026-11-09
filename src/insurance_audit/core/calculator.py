@@ -33,19 +33,19 @@ def calculate_payout(
 ) -> Decimal:
     """
     核心赔付计算函数
-    
+
     公式：应赔额 = (报案金额 - 免赔额) * 赔付比例
     当报案金额 <= 免赔额时，赔付为0
-    
+
     Args:
         claim_amount: 报案金额（元）
         deductible: 免赔额（元），不传则使用全局默认值
         ratio: 赔付比例，不传则使用全局默认值
         policy_id: 保单号（可选，用于错误信息）
-    
+
     Returns:
         计算结果（Decimal，2位小数，ROUND_HALF_UP）
-    
+
     Raises:
         NegativeClaimAmountError: 报案金额为负数
         InvalidDeductibleError: 免赔额为负数
@@ -74,29 +74,24 @@ def calculate_payout(
 
     # --- 核心计算 ---
     if claim_amount <= deductible:
-        logger.debug(
-            f"报案金额 {claim_amount} <= 免赔额 {deductible}，赔付为0"
-        )
+        logger.debug(f"报案金额 {claim_amount} <= 免赔额 {deductible}，赔付为0")
         return Decimal("0.00")
 
     payout = (claim_amount - deductible) * ratio
     precision = Decimal(10) ** -settings.insurance.decimal_places
     result = payout.quantize(precision, rounding="ROUND_HALF_UP")
 
-    logger.debug(
-        f"赔付计算: 报案={claim_amount} 免赔={deductible} "
-        f"比例={ratio} -> 赔付={result}"
-    )
+    logger.debug(f"赔付计算: 报案={claim_amount} 免赔={deductible} 比例={ratio} -> 赔付={result}")
     return result
 
 
 def batch_calculate(records: list[ClaimRecord]) -> list[ClaimRecord]:
     """
     批量赔付计算
-    
+
     Args:
         records: 理赔记录列表
-    
+
     Returns:
         计算完成后的记录列表（calculated_payout 字段已填充）
     """
@@ -110,13 +105,9 @@ def batch_calculate(records: list[ClaimRecord]) -> list[ClaimRecord]:
             processed += 1
         except Exception as e:
             errors += 1
-            logger.error(
-                f"计算失败 — 保单 {record.policy_id}: {e}"
-            )
+            logger.error(f"计算失败 — 保单 {record.policy_id}: {e}")
             record.calculated_payout = None
             record.audit_status = f"计算失败: {type(e).__name__}"
 
-    logger.info(
-        f"批量计算完成: 成功={processed}, 失败={errors}"
-    )
+    logger.info(f"批量计算完成: 成功={processed}, 失败={errors}")
     return records
