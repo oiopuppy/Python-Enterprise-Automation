@@ -27,17 +27,17 @@ def generate_report(
 ) -> Path:
     """
     生成完整的审计报告 Excel 文件（多Sheet）
-    
+
     报告结构：
     - Sheet 1: 审计摘要
     - Sheet 2: 对账明细
     - Sheet 3: 异常数据
-    
+
     Args:
         detail_df: 对账明细 DataFrame
         summary: 审计摘要
         output_path: 输出文件路径
-    
+
     Returns:
         输出文件的绝对路径
     """
@@ -82,30 +82,20 @@ def generate_report(
         str(path.absolute()),
         engine="openpyxl",
     ) as writer:
-        summary_df.to_excel(
-            writer, sheet_name="审计摘要", index=False
-        )
-        detail_df.to_excel(
-            writer, sheet_name="对账明细", index=False
-        )
-        anomaly_df.to_excel(
-            writer, sheet_name="异常数据", index=False
-        )
+        summary_df.to_excel(writer, sheet_name="审计摘要", index=False)
+        detail_df.to_excel(writer, sheet_name="对账明细", index=False)
+        anomaly_df.to_excel(writer, sheet_name="异常数据", index=False)
 
         # 自动调整列宽（所有Sheet）
         for sheet_name in writer.sheets:
             worksheet = writer.sheets[sheet_name]
             for column in worksheet.columns:
-                max_length = max(
-                    len(str(cell.value or "")) for cell in column
-                )
-                worksheet.column_dimensions[
-                    column[0].column_letter
-                ].width = min(max_length + 4, 50)
+                max_length = max(len(str(cell.value or "")) for cell in column)
+                worksheet.column_dimensions[column[0].column_letter].width = min(max_length + 4, 50)
 
     abs_path = path.absolute()
     size_kb = path.stat().st_size / 1024
     logger.info(f"审计报告已生成: {abs_path} ({size_kb:.1f} KB)")
     logger.info(f"  报告包含 {len(detail_df)} 条明细 + {summary.unmatched_records} 条异常标记")
-    
+
     return abs_path

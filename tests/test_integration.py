@@ -85,17 +85,19 @@ class TestIntegrationAuditPipeline:
     def test_pipeline_with_mismatches(self, tmp_path: Path) -> None:
         """含不一致数据的审计流水线"""
         # 手动制造不一致数据
+
         import pandas as pd
-        from decimal import Decimal
-        
-        df = pd.DataFrame({
-            "保单号": ["CL9900100", "CL9900101"],
-            "客户姓名": ["张三", "李四"],
-            "报案金额": [1000.0, 200.0],
-            "免赔额": [500.0, 500.0],
-            "赔付比例": [0.80, 0.80],
-            "实际赔付金额": [9999.0, 0.0],  # 第一条故意不一致
-        })
+
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100", "CL9900101"],
+                "客户姓名": ["张三", "李四"],
+                "报案金额": [1000.0, 200.0],
+                "免赔额": [500.0, 500.0],
+                "赔付比例": [0.80, 0.80],
+                "实际赔付金额": [9999.0, 0.0],  # 第一条故意不一致
+            }
+        )
         input_file = str(tmp_path / "bad_input.xlsx")
         df.to_excel(input_file, index=False)
 

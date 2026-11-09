@@ -51,7 +51,7 @@ COLUMN_CONSTRAINTS: dict[str, dict[str, Any]] = {
 def validate_columns(df: pd.DataFrame) -> None:
     """
     校验Excel文件是否包含所有必需的列
-    
+
     Raises:
         InvalidColumnError: 缺少必需列
     """
@@ -66,10 +66,10 @@ def validate_row(
 ) -> tuple[bool, str]:
     """
     校验单行数据
-    
+
     Args:
         row: (行号, 行数据字典)
-    
+
     Returns:
         (是否通过, 错误信息)
     """
@@ -93,22 +93,14 @@ def validate_row(
         constraints = COLUMN_CONSTRAINTS.get(col)
         if constraints:
             if dec_val < constraints["min"]:
-                return False, (
-                    f"第{row_num}行 [{col}] = {dec_val} "
-                    f"低于最小值 {constraints['min']}"
-                )
+                return False, (f"第{row_num}行 [{col}] = {dec_val} 低于最小值 {constraints['min']}")
             if dec_val > constraints["max"]:
-                return False, (
-                    f"第{row_num}行 [{col}] = {dec_val} "
-                    f"超过最大值 {constraints['max']}"
-                )
+                return False, (f"第{row_num}行 [{col}] = {dec_val} 超过最大值 {constraints['max']}")
 
         # 精度校验（最多2位小数）
-        if dec_val.as_tuple().exponent < -2:
-            return False, (
-                f"第{row_num}行 [{col}] = {dec_val} "
-                f"精度超过2位小数，不符合财务规范"
-            )
+        exponent = dec_val.as_tuple().exponent
+        if isinstance(exponent, int) and exponent < -2:
+            return False, (f"第{row_num}行 [{col}] = {dec_val} 精度超过2位小数，不符合财务规范")
 
     # 3. 赔付比例校验
     ratio = Decimal(str(data.get("赔付比例", 0)))
@@ -118,7 +110,10 @@ def validate_row(
     # 4. 保单号格式校验
     policy_id = str(data.get("保单号", ""))
     if not policy_id.startswith(settings.insurance.policy_prefix):
-        return False, f"第{row_num}行 [保单号] = {policy_id} 格式异常（应以{settings.insurance.policy_prefix}开头）"
+        return (
+            False,
+            f"第{row_num}行 [保单号] = {policy_id} 格式异常（应以{settings.insurance.policy_prefix}开头）",
+        )
 
     return True, ""
 
@@ -126,18 +121,18 @@ def validate_row(
 def validate_dataframe(df: pd.DataFrame) -> list[DataValidationError]:
     """
     全量数据校验
-    
+
     Args:
         df: 数据 DataFrame
-    
+
     Returns:
         校验错误列表（空列表表示全部通过）
     """
     logger.info(f"开始数据校验，共 {len(df)} 行")
-    
+
     # 1. 先校验列
     validate_columns(df)
-    
+
     # 2. 逐行校验
     errors: list[DataValidationError] = []
     valid_count = 0
@@ -156,7 +151,5 @@ def validate_dataframe(df: pd.DataFrame) -> list[DataValidationError]:
                 )
             )
 
-    logger.info(
-        f"数据校验完成: 有效={valid_count}, 异常={len(errors)}"
-    )
+    logger.info(f"数据校验完成: 有效={valid_count}, 异常={len(errors)}")
     return errors

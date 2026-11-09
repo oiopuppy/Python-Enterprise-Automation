@@ -80,7 +80,9 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+# mypy 1.20 起不再支持把 3.9 作为分析目标（must be 3.10 or higher），
+# 这里按 3.10 语义做类型检查；3.9 的运行时兼容性由 CI 的 3.9 测试矩阵保证。
+python_version = "3.10"
 strict = true
 ignore_missing_imports = true
 warn_return_any = true
@@ -89,7 +91,9 @@ disallow_untyped_defs = true
 disallow_any_unimported = false
 
 [tool.ruff]
-target-version = "py311"
+# requires-python 是 >=3.9，规则集合必须按 3.9 判断可用的语法，
+# 否则会强制把 Optional[X] 改写成 3.10+ 才支持的 X | None。
+target-version = "py39"
 line-length = 100
 
 [tool.ruff.lint]
@@ -105,7 +109,13 @@ select = [
     "SIM", # simplify
     "ARG", # unused arguments
 ]
-ignore = ["E501"]  # let black handle line length
+ignore = ["E501"]  # 行长由 formatter 负责
+
+[tool.ruff.lint.per-file-ignores]
+# 测试里 assert 是 pytest 的断言方式，不是安全风险
+"tests/**" = ["S101"]
+# 异常类名沿用 v1 的公开 API（DataException 等），改名会破坏调用方导入
+"src/insurance_audit/utils/exceptions.py" = ["N818"]
 
 [tool.ruff.format]
 quote-style = "double"

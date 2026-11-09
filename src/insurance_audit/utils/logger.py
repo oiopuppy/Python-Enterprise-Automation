@@ -16,17 +16,16 @@
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Optional
 
 from insurance_audit.utils.config import settings
 
 # 颜色映射（控制台输出使用）
 _COLORS = {
-    "DEBUG": "\033[36m",     # Cyan
-    "INFO": "\033[32m",      # Green
-    "WARNING": "\033[33m",   # Yellow
-    "ERROR": "\033[31m",     # Red
+    "DEBUG": "\033[36m",  # Cyan
+    "INFO": "\033[32m",  # Green
+    "WARNING": "\033[33m",  # Yellow
+    "ERROR": "\033[31m",  # Red
     "CRITICAL": "\033[41m",  # Red background
     "RESET": "\033[0m",
 }
@@ -45,7 +44,7 @@ class ColorFormatter(logging.Formatter):
 
 class AuditLogger:
     """审计追溯专用日志器 — 记录所有操作变更"""
-    
+
     _instance: Optional["AuditLogger"] = None
     _logger: Optional[logging.Logger] = None
 
@@ -72,14 +71,18 @@ class AuditLogger:
             backupCount=settings.log.backup_count,
             encoding="utf-8",
         )
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s | AUDIT | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | AUDIT | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
         self._logger.addHandler(handler)
 
     def log(self, action: str, detail: str, user: str = "SYSTEM") -> None:
         """记录审计事件"""
+        if self._logger is None:
+            return
         self._logger.info(f"{user} | {action} | {detail}")
 
     def safe_log(self, action: str, detail: str, user: str = "SYSTEM") -> None:
@@ -87,9 +90,7 @@ class AuditLogger:
         try:
             self.log(action, detail, user)
         except Exception as e:
-            logging.getLogger(__name__).error(
-                f"审计日志写入失败 [{action}]: {e}"
-            )
+            logging.getLogger(__name__).error(f"审计日志写入失败 [{action}]: {e}")
 
 
 # =============================================================================
@@ -103,11 +104,11 @@ _root_configured = False
 def get_logger(name: str) -> logging.Logger:
     """
     获取或创建日志器
-    
+
     每个模块有自己的日志器，继承根日志器的配置
     """
     global _root_configured
-    
+
     if name in _loggers:
         return _loggers[name]
 
@@ -124,32 +125,36 @@ def _configure_root_logger() -> None:
     """配置根日志器 — 同时输出到控制台和文件"""
     root = logging.getLogger()
     root.setLevel(getattr(logging, settings.log.level, logging.INFO))
-    
+
     # 清空默认处理器
     root.handlers.clear()
 
     # --- 文件日志（带轮转）---
     log_path = settings.log.log_path
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     file_handler = RotatingFileHandler(
         filename=str(log_path),
         maxBytes=settings.log.max_bytes,
         backupCount=settings.log.backup_count,
         encoding="utf-8",
     )
-    file_handler.setFormatter(logging.Formatter(
-        "%(asctime)s | %(levelname)-8s | %(name)s | %(filename)s:%(lineno)d | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    ))
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(name)s | %(filename)s:%(lineno)d | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
     root.addHandler(file_handler)
 
     # --- 控制台日志（彩色）---
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(ColorFormatter(
-        "%(asctime)s | %(levelname)s | %(message)s",
-        datefmt="%H:%M:%S",
-    ))
+    console_handler.setFormatter(
+        ColorFormatter(
+            "%(asctime)s | %(levelname)s | %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
     root.addHandler(console_handler)
 
 

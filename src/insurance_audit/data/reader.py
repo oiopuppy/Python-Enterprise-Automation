@@ -21,23 +21,23 @@ logger = get_logger(__name__)
 def read_excel(file_path: Union[str, Path]) -> pd.DataFrame:
     """
     读取Excel数据文件
-    
+
     Args:
         file_path: Excel文件路径
-    
+
     Returns:
         数据的 DataFrame
-    
+
     Raises:
         FileNotFoundError: 文件不存在
         IOFailure: 读取失败
     """
     path = Path(file_path)
-    
+
     if not path.exists():
         raise FileNotFoundError(str(path.absolute()))
-    
-    if not path.suffix.lower() in (".xlsx", ".xls"):
+
+    if path.suffix.lower() not in (".xlsx", ".xls"):
         logger.warning(f"文件扩展名非标准Excel格式: {path.suffix}")
 
     try:
@@ -46,9 +46,7 @@ def read_excel(file_path: Union[str, Path]) -> pd.DataFrame:
             str(path.absolute()),
             dtype_backend="numpy_nullable",
         )
-        logger.info(
-            f"读取成功: {len(df)} 行 x {len(df.columns)} 列"
-        )
+        logger.info(f"读取成功: {len(df)} 行 x {len(df.columns)} 列")
         logger.debug(f"列名: {list(df.columns)}")
         return df
     except Exception as e:
@@ -56,4 +54,4 @@ def read_excel(file_path: Union[str, Path]) -> pd.DataFrame:
             operation="read_excel",
             path=str(path.absolute()),
             original_error=str(e),
-        )
+        ) from e
