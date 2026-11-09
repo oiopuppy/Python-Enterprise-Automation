@@ -1,7 +1,7 @@
 """
-企业级异常体系 — Enterprise Exception Hierarchy
+异常体系：按来源分类，携带错误码
 
-央企生产环境要求异常分类明确：
+分类：
 - 业务异常（BusinessException）：业务规则违反，需人工介入
 - 系统异常（SystemException）：基础设施故障，可重试
 - 数据异常（DataException）：数据质量问题，需数据治理

@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile — 保险理赔审计系统 企业级部署镜像
+# Dockerfile — 保险理赔审计系统的容器镜像
 #
 # 采用多阶段构建：
 #   1. build: 安装依赖
@@ -41,7 +41,7 @@ ENV PROJECT_ROOT=/app \
 
 # 运行时元数据
 LABEL maintainer="oiopuppy"
-LABEL description="保险理赔数据自动化审计系统 Enterprise Edition"
+LABEL description="Excel 理赔台账对账与审计工具"
 LABEL version="2.0.0"
 
 # 安装运行时系统依赖

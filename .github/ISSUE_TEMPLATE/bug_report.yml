@@ -1,0 +1,71 @@
+name: 缺陷报告
+description: 结果不对、崩溃、或和文档描述不一致
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前先看一眼 `docs/04-质量与测试.md` 的「已知限制」，有些现象是设计如此。
+        如果涉及金额算错，请务必附上脱敏后的输入行，否则很难复现。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 实际观察到的现象（报错文本、错误数值、缺失的 sheet 等）
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望是什么
+      description: 按文档应该得到什么结果
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 命令、输入文件的列结构（脱敏）、运行目录
+      placeholder: |
+        1. 在 C:\work 下执行 python -m insurance_audit --input data.xlsx
+        2. 输入包含 3 行，第 2 行保单号为 ABC123
+        3. 报告「异常数据」sheet 为空
+    validations:
+      required: true
+  - type: dropdown
+    id: exit-code
+    attributes:
+      label: 进程退出码
+      options:
+        - "0（正常）"
+        - "1（审计问题）"
+        - "2（系统错误）"
+        - "3（安全错误）"
+        - "9（业务错误）"
+        - "99（未捕获异常）"
+        - "不确定 / 没看"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: "`pip show insurance-audit` 或 `git describe` 的结果"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      description: 操作系统、Python 版本、是否 Docker
+      placeholder: Windows 11 / Python 3.9.13 / 本地
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与堆栈
+      description: 控制台输出、`logs/audit.log` 相关片段（注意脱敏）
+      render: shell
+    validations:
+      required: false

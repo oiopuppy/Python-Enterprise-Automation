@@ -1,18 +1,13 @@
 """
-保险理赔数据自动化审计系统
-China Life Insurance Claim Data Automated Audit System
+保险理赔数据自动化审计工具
 
-企业级版本 2.0.0
-Enterprise Edition 2.0.0
+读取 Excel 理赔台账，按 (报案金额 - 免赔额) × 赔付比例 重算，与原始实际赔付对账，
+输出四表报告，并用退出码区分「正常 / 有审计问题 / 系统错误」。
 
-本系统提供：
-1. 保险理赔数据的自动化对账与审计
-2. 业务规则驱动的赔付金额核算
-3. 全链路审计追溯与报告生成
-4. 支持央企合规要求的数据完整性保障
+不做：Web 界面、数据库、权限体系、跨表与跨期对账。
 """
 
 __version__ = "2.0.0"
 __app_name__ = "保险理赔审计系统"
-__description__ = "Enterprise-grade insurance claim data audit automation system"
-__author__ = "Senior Developer Team"
+__description__ = "Excel 理赔台账对账与审计工具"
+__author__ = "oiopuppy"

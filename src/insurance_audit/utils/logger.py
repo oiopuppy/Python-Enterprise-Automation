@@ -1,5 +1,5 @@
 """
-企业级日志系统 — Enterprise Logging System
+日志系统：控制台彩色输出、文件轮转、审计追溯
 
 设计要点：
 1. 库模块只取 logger，**不在 import 时创建日志目录或文件** ——

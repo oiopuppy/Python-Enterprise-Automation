@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用与配置问题
+    url: https://github.com/oiopuppy/Python-Enterprise-Automation/blob/develop/README.md
+    about: 先看 README 的输入格式、配置项、退出码说明
+  - name: 设计说明
+    url: https://github.com/oiopuppy/Python-Enterprise-Automation/tree/develop/docs
+    about: 架构决策、报告契约、质量门禁都在 docs/ 里

@@ -1,6 +1,6 @@
 # =============================================================================
 # 保险理赔审计系统 — 依赖清单
-# Enterprise Edition v2.0.0
+# 版本 2.0.0
 #
 # 本文件与 pyproject.toml 的 [project.dependencies] / [project.optional-dependencies]
 # 保持一致；正式安装请优先使用 `pip install -e ".[dev]"`。

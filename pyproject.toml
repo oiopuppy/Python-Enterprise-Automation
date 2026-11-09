@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "insurance-audit"
 version = "2.0.0"
-description = "企业级保险理赔数据自动化审计系统 — China Life Insurance Claim Audit Enterprise Edition"
+description = "Excel 理赔台账对账与审计工具：Decimal 重算、差异定位、四表报告、退出码"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -15,7 +15,7 @@ authors = [
 ]
 
 keywords = [
-    "insurance", "audit", "enterprise", "automation",
+    "insurance", "audit", "excel", "automation",
     "理赔审计", "自动化对账",
 ]
 
