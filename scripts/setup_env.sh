@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# 环境初始化脚本 — 央企部署环境准备
+# 环境初始化脚本 — 本地开发环境准备
 # =============================================================================
 # 使用方法:
 #   chmod +x scripts/setup_env.sh
@@ -18,7 +18,7 @@ echo "=========================================="
 echo ""
 echo "[1/5] 检查 Python 环境..."
 PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-REQUIRED_VERSION="3.11"
+REQUIRED_VERSION="3.9"
 
 if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
     echo "❌ Python $REQUIRED_VERSION+ 必需，当前版本: $PYTHON_VERSION"

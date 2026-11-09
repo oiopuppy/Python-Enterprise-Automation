@@ -145,8 +145,8 @@ docker run --rm \
 ## 🔒 安全说明
 
 - 非root用户运行（Docker部署默认 `auditor` 用户）
-- 敏感配置通过环境变量而非代码硬编码
-- 生产环境建议设置 `APP_DEBUG=false` 和 `ENABLE_DATA_ENCRYPTION=true`
+- 路径与业务参数通过环境变量配置，不写死在代码里
+- 生产环境建议设置 `APP_ENV=production` 与 `APP_DEBUG=false`
 - CI pipeline 包含 Bandit 安全扫描
 
 ---

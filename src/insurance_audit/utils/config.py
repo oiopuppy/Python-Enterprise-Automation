@@ -23,8 +23,11 @@ from insurance_audit.utils.exceptions import ConfigurationError
 # 加载 .env 文件
 # =============================================================================
 
-# 尝试从项目根目录加载 .env
-_project_root = Path(__file__).resolve().parents[3]
+# 项目根目录：优先取 PROJECT_ROOT（容器/自定义部署），否则按源码位置推断。
+# 容器里源码被装进 site-packages，靠 parents[3] 会指到 Python 安装目录，
+# 因此 Dockerfile 里显式设置 PROJECT_ROOT=/app。
+_default_project_root = Path(__file__).resolve().parents[3]
+_project_root = Path(os.getenv("PROJECT_ROOT", str(_default_project_root))).resolve()
 _env_file = _project_root / ".env"
 if _env_file.exists():
     load_dotenv(_env_file, override=False)
@@ -133,7 +136,6 @@ class LogConfig:
         path = Path(self.log_file)
         if not path.is_absolute():
             path = _project_root / path
-        path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     @property
@@ -141,7 +143,6 @@ class LogConfig:
         path = Path(self.audit_log_file)
         if not path.is_absolute():
             path = _project_root / path
-        path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
 
@@ -152,12 +153,6 @@ class AppConfig:
     name: str = field(default_factory=lambda: os.getenv("APP_NAME", "保险理赔审计系统"))
     env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development"))
     debug: bool = field(default_factory=lambda: os.getenv("APP_DEBUG", "true").lower() == "true")
-    secret_key: str = field(
-        default_factory=lambda: os.getenv("SECRET_KEY", "change-me-in-production")
-    )
-    data_encryption_enabled: bool = field(
-        default_factory=lambda: os.getenv("ENABLE_DATA_ENCRYPTION", "false").lower() == "true"
-    )
 
     @property
     def is_production(self) -> bool:

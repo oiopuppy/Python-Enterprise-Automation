@@ -3,17 +3,14 @@
 Enterprise Insurance Claim Audit System — Entry Point
 
 工作流：
-1. 加载配置
+1. 初始化日志
 2. 健康检查（环境、文件就绪）
-3. 读取数据
-4. 数据校验
-5. 自动对账
-6. 生成报告
-7. 审计追溯
+3. 执行审计引擎（读取 → 校验 → 对账 → 报告）
+4. 审计追溯
 
 退出码约定：
     0 = 审计完成且全部一致
-    1 = 审计完成但存在对账异常 / 数据文件缺失
+    1 = 审计完成但存在对账异常 / 解析失败 / 数据文件缺失
     2 = 系统异常
     3 = 安全异常
     9 = 其他业务异常
@@ -25,20 +22,16 @@ import sys
 from pathlib import Path
 
 from insurance_audit import __app_name__, __version__
-from insurance_audit.audit.reconciler import reconcile_dataframe
-from insurance_audit.audit.reporter import generate_report
-from insurance_audit.core.validator import validate_columns, validate_dataframe
+from insurance_audit.core.engine import AuditEngine
 from insurance_audit.data.generator import generate_mock_data
-from insurance_audit.data.reader import read_excel
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import (
     DataException,
-    FileNotFoundError,
     InsuranceAuditError,
     SecurityException,
     SystemException,
 )
-from insurance_audit.utils.logger import audit_logger, get_logger
+from insurance_audit.utils.logger import get_audit_logger, get_logger, setup_logging
 
 logger = get_logger(__name__)
 
@@ -61,8 +54,7 @@ def check_environment(input_path: Path) -> bool:
 
     检查项：
     - 数据文件是否存在
-    - 日志目录是否可写
-    - 依赖是否就绪（通过启动时验证）
+    - 日志目录是否可写（由 setup_logging 保证）
     """
     logger.info("=" * 60)
     logger.info(f"--- {__app_name__} v{__version__} ---")
@@ -92,55 +84,20 @@ def run_audit(input_path: Path, output_path: Path) -> int:
     """
     执行完整的审计工作流
 
-    Args:
-        input_path: 待审计的 Excel 文件
-        output_path: 审计报告输出路径
+    具体的「读取 → 校验 → 对账 → 报告」由 AuditEngine 统一编排，
+    这里只负责日志、审计追溯与退出码。
 
     Returns:
-        0 = 全部对账一致, 1 = 存在对账异常或数据质量问题已阻断
+        0 = 全部对账一致；1 = 存在对账异常或解析失败
     """
-    audit_logger.safe_log("AUDIT_START", "开始执行理赔数据审计流程")
+    audit = get_audit_logger()
+    audit.safe_log("AUDIT_START", "开始执行理赔数据审计流程")
 
-    # --- 2a. 读取数据 ---
-    logger.info("\n[阶段 1/4] 读取数据文件...")
-    try:
-        df = read_excel(str(input_path))
-    except FileNotFoundError:
-        raise DataException(f"数据文件不存在: {input_path}") from None
-    except ValueError as e:
-        raise DataException(f"Excel 内容解析失败: {e}") from e
-    except Exception as e:
-        raise SystemException(f"读取Excel失败: {e}") from e
-    audit_logger.safe_log(
-        "DATA_LOADED",
-        f"从 {input_path.name} 读取 {len(df)} 条记录",
-    )
+    logger.info("\n[阶段 1/2] 执行审计引擎（读取 → 校验 → 对账 → 报告）...")
+    engine = AuditEngine(input_file=str(input_path), output_file=str(output_path))
+    summary = engine.run()
 
-    # --- 2b. 数据校验 ---
-    logger.info("\n[阶段 2/4] 数据质量校验...")
-    try:
-        validate_columns(df)
-    except DataException as e:
-        logger.error(f"列校验失败: {e}")
-        audit_logger.safe_log("VALIDATION_FAILED", str(e))
-        return EXIT_AUDIT_ISSUE
-
-    errors = validate_dataframe(df)
-    if errors:
-        logger.warning(f"发现 {len(errors)} 条数据质量问题（已写入报告「数据质量问题」工作表）:")
-        for err in errors[:5]:  # 控制台只显示前5条
-            logger.warning(f"  [WARN] {err}")
-        audit_logger.safe_log(
-            "VALIDATION_WARNINGS",
-            f"发现 {len(errors)} 条数据质量问题",
-        )
-    else:
-        logger.info("[OK] 数据质量校验通过")
-
-    # --- 2c. 自动对账 ---
-    logger.info("\n[阶段 3/4] 执行自动对账...")
-    result_df, summary = reconcile_dataframe(df)
-    audit_logger.safe_log(
+    audit.safe_log(
         "RECONCILIATION_DONE",
         f"对账完成: 读取{summary.source_records}条, "
         f"解析成功{summary.total_records}条, "
@@ -149,23 +106,10 @@ def run_audit(input_path: Path, output_path: Path) -> int:
         f"{summary.unmatched_records}条异常, "
         f"一致率{summary.match_rate}%",
     )
-
-    # --- 2d. 生成报告 ---
-    logger.info("\n[阶段 4/4] 生成审计报告...")
-    report_path = generate_report(
-        result_df,
-        summary,
-        str(output_path),
-        validation_errors=errors,
-    )
-    audit_logger.safe_log(
-        "REPORT_GENERATED",
-        f"审计报告已保存: {report_path.name}",
-    )
+    audit.safe_log("REPORT_GENERATED", f"审计报告已保存: {output_path.name}")
 
     # --- 输出摘要 ---
-    logger.info("\n" + "=" * 60)
-    logger.info("审计结果摘要")
+    logger.info("\n[阶段 2/2] 审计结果摘要")
     logger.info("=" * 60)
     logger.info(f"  读取记录: {summary.source_records}")
     logger.info(f"  成功解析: {summary.total_records}")
@@ -175,8 +119,8 @@ def run_audit(input_path: Path, output_path: Path) -> int:
     if summary.unmatched_records > 0:
         logger.info(f"  [ERR] 异常: {summary.unmatched_records}")
     logger.info(f"  一致率: {summary.match_rate:.2f}%")
-    logger.info(f"  总差异金额: ￥{summary.total_discrepancy:,.2f}")
-    logger.info(f"  报告文件: {report_path}")
+    logger.info(f"  总差异金额: {summary.total_discrepancy:,.2f} 元")
+    logger.info(f"  报告文件: {output_path.absolute()}")
     logger.info("=" * 60)
 
     if summary.unmatched_records > 0:
@@ -224,12 +168,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # 日志配置必须在任何文件写入之前完成（库模块 import 时不建日志文件）
+    setup_logging()
+
     input_path = Path(args.input) if args.input else settings.data.input_path
     output_path = Path(args.output) if args.output else settings.data.output_path
 
     logger.info(f"{__app_name__} v{__version__} 启动")
 
     exit_code = EXIT_OK
+    audit = get_audit_logger()
 
     try:
         if args.generate_mock:
@@ -246,29 +194,26 @@ def main() -> None:
 
     except DataException as e:
         logger.error(f"[ERR] 数据异常: {e}")
-        audit_logger.safe_log("DATA_ERROR", str(e))
+        audit.safe_log("DATA_ERROR", str(e))
         exit_code = EXIT_AUDIT_ISSUE
     except SecurityException as e:
         logger.critical(f"[SEC] 安全异常: {e}")
-        audit_logger.safe_log("SECURITY_ALERT", str(e))
+        audit.safe_log("SECURITY_ALERT", str(e))
         exit_code = EXIT_SECURITY_ERROR
     except SystemException as e:
         logger.error(f"[ERR] 系统异常: {e}")
-        audit_logger.safe_log("SYSTEM_ERROR", str(e))
+        audit.safe_log("SYSTEM_ERROR", str(e))
         exit_code = EXIT_SYSTEM_ERROR
     except InsuranceAuditError as e:
         logger.error(f"[ERR] 审计异常 [{e.error_code}]: {e}")
-        audit_logger.safe_log("UNKNOWN_ERROR", str(e))
+        audit.safe_log("UNKNOWN_ERROR", str(e))
         exit_code = EXIT_BUSINESS_ERROR
     except Exception as e:
         logger.critical(f"[CRIT] 未预期异常: {e}")
-        audit_logger.safe_log("CRITICAL_ERROR", str(e))
+        audit.safe_log("CRITICAL_ERROR", str(e))
         exit_code = EXIT_UNEXPECTED
     finally:
-        audit_logger.safe_log(
-            "AUDIT_COMPLETE",
-            f"审计流程结束，退出码={exit_code}",
-        )
+        audit.safe_log("AUDIT_COMPLETE", f"审计流程结束，退出码={exit_code}")
         logger.info(f"审计流程结束 (退出码: {exit_code})")
 
     sys.exit(exit_code)

@@ -1,19 +1,23 @@
 # =============================================================================
 # 保险理赔审计系统 — 依赖清单
 # Enterprise Edition v2.0.0
+#
+# 本文件与 pyproject.toml 的 [project.dependencies] / [project.optional-dependencies]
+# 保持一致；正式安装请优先使用 `pip install -e ".[dev]"`。
 # =============================================================================
 
 # --- 核心运行时依赖 ---
 pandas>=2.1.0              # 数据处理
 openpyxl>=3.1.0            # Excel 读写
-numpy>=1.24.0              # 数值计算
 python-dotenv>=1.0.0       # 环境变量管理
 pydantic>=2.5.0            # 数据模型与校验
 
-# --- 测试依赖 ---
+# --- 开发 / 测试依赖 ---
 pytest>=7.4.0              # 测试框架
+pytest-cov>=4.1.0          # 覆盖率插件
+pytest-mock>=3.12.0        # mock 插件
 mypy>=1.7.0                # 类型检查
 ruff>=0.1.0                # 代码风格
-pre-commit>=3.5.0          # Git钩子管理
+pre-commit>=3.5.0          # Git 钩子管理
 coverage>=7.3.0            # 覆盖率报告
 hypothesis>=6.92.0         # 属性测试

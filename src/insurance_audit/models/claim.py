@@ -93,14 +93,23 @@ class ClaimRecord(BaseModel):
     def calculate_payout(self) -> Decimal:
         """
         核心赔付计算逻辑
-        公式：应赔额 = (报案金额 - 免赔额) * 赔付比例
-        """
-        if self.claim_amount <= self.deductible:
-            return Decimal("0.00")
 
-        payout = (self.claim_amount - self.deductible) * self.payout_ratio
-        # 使用ROUND_HALF_UP四舍五入到2位小数（符合中国财务规范）
-        return payout.quantize(Decimal("0.01"), rounding="ROUND_HALF_UP")
+        公式：应赔额 = (报案金额 - 免赔额) * 赔付比例
+
+        统一委托给 ``core.calculator.calculate_payout``，
+        避免模型层与核心层各有一套公式、改一处漏一处。
+
+        这里用函数内导入：calculator 需要 ClaimRecord 做类型标注，
+        顶层导入会形成 claim -> calculator -> claim 的循环。
+        """
+        from insurance_audit.core.calculator import calculate_payout
+
+        return calculate_payout(
+            claim_amount=self.claim_amount,
+            deductible=self.deductible,
+            ratio=self.payout_ratio,
+            policy_id=self.policy_id,
+        )
 
     def reconcile(self) -> tuple[bool, Decimal]:
         """
