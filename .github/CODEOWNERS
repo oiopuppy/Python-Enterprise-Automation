@@ -1,0 +1,4 @@
+# 单人维护仓库：所有路径的变更由仓库所有者审查
+# 说明：GitHub 不允许 PR 作者自己 approve，因此这一条主要用于
+#       让 GitHub 在 PR 里自动请求 @oiopuppy 作为 reviewer 留痕。
+* @oiopuppy
