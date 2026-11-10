@@ -12,10 +12,13 @@
 - `--json PATH`：额外输出机器可读摘要（金额为字符串，避免浮点丢精度），便于接调度、看板或告警。
 - 「对账明细」「异常数据」的金额与比例改为真正的数值单元格，可直接筛选、求和。
 - `.xls` 缺少 `xlrd` 时给出安装或另存为 `.xlsx` 的提示，不再抛原始 `ImportError`。
+- `.github/dependabot.yml`：每周检查 pip 依赖与 GitHub Actions 更新，自动开 PR。
 
 ### 变更
 
 - CI 增加 `permissions: contents: read` 与 `concurrency`（同分支新推送取消旧流水线）；去掉 `paths-ignore`，纯文档提交也跑链接与模板检查。
+- CI 的 security job 增加 `pip-audit -r requirements.txt --strict`；第三方 action 固定到 commit SHA。
+- `main` / `develop` 启用分支保护：5 个 CI 检查必须全绿（strict）、禁止 force push、禁止删除。
 - `AuditSummary.execution_time` 现在记录对账阶段耗时（例如 `0.01s`），不再恒为空。
 - 删除只有测试在用的 `batch_calculate`，赔付公式只保留 `calculate_payout` 一处实现。
 - 性能实测：1 万行 mock 端到端 6.85 秒（Python 3.9.13，本地）。
