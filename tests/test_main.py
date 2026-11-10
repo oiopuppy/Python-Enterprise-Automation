@@ -15,6 +15,12 @@ import pytest
 
 from insurance_audit import main as main_module
 from insurance_audit.data.generator import generate_mock_data
+from insurance_audit.utils.exceptions import (
+    BusinessException,
+    DataException,
+    SecurityException,
+    SystemException,
+)
 
 
 def _run_main(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
@@ -57,6 +63,50 @@ class TestCliExitCodes:
         )
         assert code == 0
         assert (tmp_path / "report.xlsx").exists()
+
+
+class TestExceptionToExitCode:
+    """异常类型 → 退出码映射（0/1/2/3/9/99 矩阵）
+
+    0/1 走真实审计路径（见 TestCliExitCodes），这里覆盖 2/3/9/99：
+    让 run_audit 抛出对应异常，确认 main() 的 except 分支映射正确。
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (DataException("数据坏了"), 1),
+            (SecurityException("越权访问"), 3),
+            (SystemException("磁盘满了"), 2),
+            (BusinessException("业务规则不满足"), 9),
+            (RuntimeError("没人预料到的错误"), 99),
+        ],
+    )
+    def test_error_type_maps_to_exit_code(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        error: Exception,
+        expected: int,
+    ) -> None:
+        input_file = tmp_path / "input.xlsx"
+        input_file.write_bytes(b"not a real workbook")
+        monkeypatch.setattr(main_module, "check_environment", lambda _path: True)
+
+        def _raise(*_args: object, **_kwargs: object) -> int:
+            raise error
+
+        monkeypatch.setattr(main_module, "run_audit", _raise)
+
+        code = _run_main(
+            monkeypatch,
+            "--input",
+            str(input_file),
+            "--output",
+            str(tmp_path / "report.xlsx"),
+        )
+        assert code == expected
 
     @pytest.mark.unit
     def test_audit_with_anomalies_returns_1(

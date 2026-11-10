@@ -15,6 +15,10 @@
 - `tests/test_perf_smoke.py`：1000 行性能 smoke，拦截数量级回退。
 - `.xls` 缺少 `xlrd` 时给出安装或另存为 `.xlsx` 的提示，不再抛原始 `ImportError`。
 - `.github/dependabot.yml`：每周检查 pip 依赖与 GitHub Actions 更新，自动开 PR。
+- `.github/workflows/release.yml`：tag `v*` 触发，从实际安装环境生成 CycloneDX SBOM 并作为 release asset 上传；手动触发只产出 artifact。
+- `.github/CODEOWNERS`：全部路径指派给 `@oiopuppy`。
+- `tests/test_calculator_properties.py`：hypothesis 属性测试（赔付非负、两位小数、公式恒等、比例单调、负数/越界比例被拒）。
+- `tests/test_main.py` 新增退出码矩阵：异常类型 → 1/2/3/9/99。
 
 ### 变更
 
@@ -24,10 +28,12 @@
 - `AuditSummary.execution_time` 现在记录对账阶段耗时（例如 `0.01s`），不再恒为空。
 - 删除只有测试在用的 `batch_calculate`，赔付公式只保留 `calculate_payout` 一处实现。
 - 性能实测（`scripts/benchmark.py`，tracemalloc 开启）：1 万行端到端 9.8 秒 / 峰值 48 MB；10 万行 90.7 秒 / 460 MB。
+- CI 测试增加 `--cov-fail-under=85`，覆盖率低于 85% 直接失败。
+- 移除从未使用的 `pytest-mock` 与冗余的 `coverage`（由 `pytest-cov` 带入）。
 
 ### 测试
 
-- 用例总数 58 → 63 → 65 → 68；覆盖率 88%。
+- 用例总数 58 → 63 → 65 → 68 → 77；覆盖率 91%。
 
 ## [2.0.0] - 2026-11-10
 
