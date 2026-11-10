@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # 运行时依赖（pandas / openpyxl / pydantic / python-dotenv）与开发依赖
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+
+  # CI 里固定的第三方 action
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "ci"]
