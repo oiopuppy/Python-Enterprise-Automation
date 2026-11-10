@@ -14,6 +14,7 @@ from insurance_audit.core.validator import validate_dataframe
 from insurance_audit.data.reader import read_excel
 from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
+from insurance_audit.utils.exceptions import DataValidationError
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -36,6 +37,8 @@ class AuditEngine:
         self.input_file = input_file or str(settings.data.input_path)
         self.output_file = output_file or str(settings.data.output_path)
         self.summary: Optional[AuditSummary] = None
+        # 字段级校验问题：供 --json 的 quality_issues 使用
+        self.validation_errors: list[DataValidationError] = []
 
     def run(self) -> AuditSummary:
         """
@@ -52,6 +55,7 @@ class AuditEngine:
 
         # 2. 数据校验
         validation_errors = validate_dataframe(df)
+        self.validation_errors = validation_errors
         if validation_errors:
             logger.warning(f"数据校验发现 {len(validation_errors)} 个问题，已写入报告")
 

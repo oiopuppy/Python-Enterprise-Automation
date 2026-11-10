@@ -17,12 +17,13 @@
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from insurance_audit import __app_name__, __version__
-from insurance_audit.audit.reporter import write_json_report
+from insurance_audit.audit.reporter import build_json_payload, write_json_report
 from insurance_audit.core.engine import AuditEngine
 from insurance_audit.data.generator import generate_mock_data
 from insurance_audit.utils.config import settings
@@ -81,10 +82,26 @@ def check_environment(input_path: Path) -> bool:
 # =============================================================================
 
 
+def _write_json_stdout(payload: dict[str, Any]) -> None:
+    """把 JSON 以 UTF-8 写到 stdout。
+
+    Windows 控制台/管道的默认编码是 GBK，直接 ``print`` 会写出非 UTF-8 字节，
+    下游 ``json.load`` 就会失败；这里直接写字节流，保证管道里也是 UTF-8。
+    """
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:  # 测试框架可能把 stdout 换成了纯文本流
+        print(text)
+        return
+    buffer.write((text + "\n").encode("utf-8"))
+    buffer.flush()
+
+
 def run_audit(
     input_path: Path,
     output_path: Path,
-    json_path: Optional[Path] = None,
+    emit_json: bool = False,
+    json_out: Optional[Path] = None,
 ) -> int:
     """
     执行完整的审计工作流
@@ -95,7 +112,8 @@ def run_audit(
     Args:
         input_path: 待审计的 Excel 路径
         output_path: 审计报告输出路径
-        json_path: 可选的 JSON 摘要输出路径（便于接调度/看板）
+        emit_json: 是否把 JSON 摘要打印到 stdout（日志走 stderr，stdout 保持纯 JSON）
+        json_out: 可选的 JSON 摘要落盘路径
 
     Returns:
         0 = 全部对账一致；1 = 存在对账异常或解析失败
@@ -107,13 +125,18 @@ def run_audit(
     engine = AuditEngine(input_file=str(input_path), output_file=str(output_path))
     summary = engine.run()
 
-    if json_path is not None:
-        write_json_report(
+    if emit_json or json_out is not None:
+        payload = build_json_payload(
             summary,
-            json_path,
             input_file=str(input_path),
             output_file=str(output_path),
+            validation_errors=engine.validation_errors,
         )
+        if emit_json:
+            # stdout 只输出 JSON（日志已走 stderr），可直接被 jq / json.load 消费
+            _write_json_stdout(payload)
+        if json_out is not None:
+            write_json_report(payload, json_out)
 
     audit.safe_log(
         "RECONCILIATION_DONE",
@@ -186,8 +209,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--json",
+        action="store_true",
+        help="把 JSON 摘要输出到 stdout（日志走 stderr，便于管道与调度）",
+    )
+    parser.add_argument(
+        "--json-out",
         default=None,
-        help="额外输出 JSON 摘要（机器可读，便于接调度/看板）",
+        help="同时把 JSON 摘要写入指定文件",
     )
     args = parser.parse_args()
 
@@ -196,7 +224,7 @@ def main() -> None:
 
     input_path = Path(args.input) if args.input else settings.data.input_path
     output_path = Path(args.output) if args.output else settings.data.output_path
-    json_path = Path(args.json) if args.json else None
+    json_out = Path(args.json_out) if args.json_out else None
 
     logger.info(f"{__app_name__} v{__version__} 启动")
 
@@ -214,7 +242,7 @@ def main() -> None:
             logger.info("   insurance-audit --generate-mock")
             exit_code = EXIT_AUDIT_ISSUE
         else:
-            exit_code = run_audit(input_path, output_path, json_path)
+            exit_code = run_audit(input_path, output_path, args.json, json_out)
 
     except DataException as e:
         logger.error(f"[ERR] 数据异常: {e}")
