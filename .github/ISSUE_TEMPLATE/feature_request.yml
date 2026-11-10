@@ -1,6 +1,7 @@
 name: 功能需求
 description: 希望增加或调整的能力
-labels: ["enhancement"]
+labels: ["enhancement", "status: triage"]
+assignees: ["oiopuppy"]
 body:
   - type: markdown
     attributes:
