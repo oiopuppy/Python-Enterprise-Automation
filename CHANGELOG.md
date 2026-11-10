@@ -9,15 +9,20 @@
 - `scripts/check_markdown_links.py`、`check_env_example.py`、`check_version_consistency.py`：文档死链、`.env.example` 变量覆盖、版本号一致性检查，CI 中与 ruff/mypy 一起跑。
 - `CONTRIBUTING.md`、`SECURITY.md`、`.editorconfig`。
 - `tests/test_doc_tools.py`：5 个负向用例，保证检查脚本本身能抓到问题。
+- `--json PATH`：额外输出机器可读摘要（金额为字符串，避免浮点丢精度），便于接调度、看板或告警。
+- 「对账明细」「异常数据」的金额与比例改为真正的数值单元格，可直接筛选、求和。
+- `.xls` 缺少 `xlrd` 时给出安装或另存为 `.xlsx` 的提示，不再抛原始 `ImportError`。
 
 ### 变更
 
 - CI 增加 `permissions: contents: read` 与 `concurrency`（同分支新推送取消旧流水线）；去掉 `paths-ignore`，纯文档提交也跑链接与模板检查。
 - `AuditSummary.execution_time` 现在记录对账阶段耗时（例如 `0.01s`），不再恒为空。
+- 删除只有测试在用的 `batch_calculate`，赔付公式只保留 `calculate_payout` 一处实现。
+- 性能实测：1 万行 mock 端到端 6.85 秒（Python 3.9.13，本地）。
 
 ### 测试
 
-- 用例总数 58 → 63。
+- 用例总数 58 → 63 → 65。
 
 ## [2.0.0] - 2026-11-10
 

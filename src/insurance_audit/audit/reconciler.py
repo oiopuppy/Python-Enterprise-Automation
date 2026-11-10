@@ -96,7 +96,7 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     total_discrepancy = Decimal("0.00")
     total_calculated = Decimal("0.00")
     total_actual = Decimal("0.00")
-    detail_rows: list[dict[str, str]] = []
+    detail_rows: list[dict[str, Any]] = []
 
     for record in records:
         is_match, diff = record.reconcile()
@@ -119,12 +119,12 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
             {
                 "保单号": record.policy_id,
                 "客户姓名": record.customer_name,
-                "报案金额": str(record.claim_amount),
-                "免赔额": str(record.deductible),
-                "赔付比例": str(record.payout_ratio),
-                "原始赔付金额": str(record.actual_payout),
-                "系统核算金额": str(record.calculated_payout or Decimal("0.00")),
-                "差异金额": str(diff),
+                "报案金额": float(record.claim_amount),
+                "免赔额": float(record.deductible),
+                "赔付比例": float(record.payout_ratio),
+                "原始赔付金额": float(record.actual_payout),
+                "系统核算金额": float(record.calculated_payout or Decimal("0.00")),
+                "差异金额": float(diff),
                 "审计状态": record.audit_status or "",
             }
         )
@@ -135,12 +135,12 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
             {
                 "保单号": str(err["policy_id"]),
                 "客户姓名": "",
-                "报案金额": "",
-                "免赔额": "",
-                "赔付比例": "",
-                "原始赔付金额": "",
-                "系统核算金额": "",
-                "差异金额": "",
+                "报案金额": None,
+                "免赔额": None,
+                "赔付比例": None,
+                "原始赔付金额": None,
+                "系统核算金额": None,
+                "差异金额": None,
                 "审计状态": PARSE_ERROR_STATUS,
             }
         )

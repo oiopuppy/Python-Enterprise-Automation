@@ -8,12 +8,14 @@
 4. 数据质量问题（字段级校验结果）
 """
 
+import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 import pandas as pd
 
+from insurance_audit import __app_name__, __version__
 from insurance_audit.audit.reconciler import PARSE_ERROR_STATUS
 from insurance_audit.data.writer import auto_adjust_column_width
 from insurance_audit.models.claim import AuditSummary
@@ -24,6 +26,11 @@ logger = get_logger(__name__)
 
 # 视为异常、需要人工复核的审计状态
 ANOMALY_STATUSES = ("异常", PARSE_ERROR_STATUS)
+
+# 对账明细中按金额显示的列（静态格式，便于在 Excel 里直接求和）
+DETAIL_AMOUNT_COLUMNS = ("报案金额", "免赔额", "原始赔付金额", "系统核算金额", "差异金额")
+# 对账明细中按比例显示的列
+DETAIL_RATIO_COLUMNS = ("赔付比例",)
 
 
 def _build_summary_rows(summary: AuditSummary) -> list[tuple[str, object, str]]:
@@ -69,6 +76,70 @@ def _build_quality_rows(
             }
         )
     return rows
+
+
+def _apply_detail_formats(ws: Any, df: pd.DataFrame) -> None:
+    """给对账明细/异常数据的金额列、比例列设置 Excel 数字格式"""
+    columns = list(df.columns)
+    for col in DETAIL_AMOUNT_COLUMNS:
+        if col not in columns:
+            continue
+        idx = columns.index(col) + 1
+        for row in range(2, len(df) + 2):
+            ws.cell(row=row, column=idx).number_format = "#,##0.00"
+    for col in DETAIL_RATIO_COLUMNS:
+        if col not in columns:
+            continue
+        idx = columns.index(col) + 1
+        for row in range(2, len(df) + 2):
+            ws.cell(row=row, column=idx).number_format = "0.00"
+
+
+def write_json_report(
+    summary: AuditSummary,
+    output_path: Union[str, Path],
+    input_file: str = "",
+    output_file: str = "",
+) -> Path:
+    """
+    把审计摘要写成机器可读的 JSON 文件，便于接调度系统或看板。
+
+    与 Excel 报告互补：Excel 给人看，JSON 给程序读。明细不写入 JSON
+    （避免大文件），完整明细见 Excel 的「对账明细」sheet。
+
+    Returns:
+        JSON 文件的绝对路径
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "app": __app_name__,
+        "version": __version__,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "input_file": input_file,
+        "output_file": output_file,
+        "summary": {
+            "source_records": summary.source_records,
+            "total_records": summary.total_records,
+            "parse_error_records": summary.parse_error_records,
+            "matched_records": summary.matched_records,
+            "unmatched_records": summary.unmatched_records,
+            "match_rate": summary.match_rate,
+            "execution_time": summary.execution_time,
+            "total_claim_amount": str(summary.total_claim_amount),
+            "total_actual_payout": str(summary.total_actual_payout),
+            "total_calculated_payout": str(summary.total_calculated_payout),
+            "total_discrepancy": str(summary.total_discrepancy),
+        },
+        "parse_errors": summary.parse_errors,
+    }
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+    abs_path = path.absolute()
+    logger.info(f"JSON 摘要已生成: {abs_path}")
+    return abs_path
 
 
 def generate_report(
@@ -128,6 +199,11 @@ def generate_report(
         anomaly_df.to_excel(writer, sheet_name="异常数据", index=False)
         quality_df.to_excel(writer, sheet_name="数据质量问题", index=False)
         auto_adjust_column_width(writer)
+
+        # 明细里的金额与比例写成数值单元格，方便在 Excel 里直接筛选、求和
+        _apply_detail_formats(writer.sheets["对账明细"], detail_df)
+        if not anomaly_df.empty:
+            _apply_detail_formats(writer.sheets["异常数据"], anomaly_df)
 
         # 摘要 Sheet：金额与百分比用 Excel 数字格式，保持可计算
         summary_ws = writer.sheets["审计摘要"]

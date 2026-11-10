@@ -6,6 +6,7 @@ CLI 退出码 — 测试套件
 导致进程退出码永远是 0，调度系统会把失败当成成功。
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -102,6 +103,34 @@ class TestCliExitCodes:
 
         anomaly_df = pd.read_excel(report_file, sheet_name="异常数据")
         assert "解析失败" in set(anomaly_df["审计状态"])
+
+    @pytest.mark.unit
+    def test_json_summary_written(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--json 输出机器可读摘要，金额保持字符串以免丢精度"""
+        input_file = tmp_path / "input.xlsx"
+        generate_mock_data(num_records=5, output_file=str(input_file), anomaly_ratio=0.0, seed=1)
+        json_file = tmp_path / "summary.json"
+
+        code = _run_main(
+            monkeypatch,
+            "--input",
+            str(input_file),
+            "--output",
+            str(tmp_path / "report.xlsx"),
+            "--json",
+            str(json_file),
+        )
+        assert code == 0
+        assert json_file.exists()
+
+        payload = json.loads(json_file.read_text(encoding="utf-8"))
+        assert payload["summary"]["source_records"] == 5
+        assert payload["summary"]["matched_records"] == 5
+        assert payload["summary"]["parse_error_records"] == 0
+        assert payload["summary"]["match_rate"] == 100.0
+        assert isinstance(payload["summary"]["total_claim_amount"], str)
+        assert payload["parse_errors"] == []
+        assert payload["version"]
 
     @pytest.mark.unit
     def test_generate_mock_writes_to_requested_input(

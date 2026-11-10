@@ -87,6 +87,15 @@ class TestReconcileDataFrame:
         assert isinstance(summary.total_discrepancy, Decimal)
 
     @pytest.mark.unit
+    def test_detail_amounts_are_numeric(self, sample_dataframe: pd.DataFrame) -> None:
+        """明细金额写成数值，便于在 Excel 里直接筛选、求和"""
+        result_df, _ = reconcile_dataframe(sample_dataframe)
+        row = result_df.iloc[0]
+        assert isinstance(row["报案金额"], float)
+        assert isinstance(row["差异金额"], float)
+        assert isinstance(row["赔付比例"], float)
+
+    @pytest.mark.unit
     def test_parse_errors_are_tracked_not_dropped(self) -> None:
         """解析失败的行要留痕，不能被静默丢掉"""
         df = pd.DataFrame(

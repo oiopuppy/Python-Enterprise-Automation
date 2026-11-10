@@ -24,10 +24,11 @@
 2. **对账** 把重算结果与原表「实际赔付金额」比较（默认容差 0.01 元）；
 3. **出报告** 一个 Excel，四个 sheet：
    - `审计摘要`：读取行数、成功解析、无法解析、一致/异常、一致率、金额合计；
-   - `对账明细`：逐条列出重算值、原始值、差异、状态；
+   - `对账明细`：逐条列出重算值、原始值、差异、状态，金额是**数值**，可直接求和；
    - `异常数据`：只保留 `异常` 与 `解析失败` 的行；
    - `数据质量问题`：字段级校验问题（空值、精度、比例越界、保单号格式、跨字段矛盾）。
 4. **给退出码**：全部一致 `0`，有差异或解析失败 `1`，系统异常 `2`——可以直接当流水线闸门用。
+5. **可选 JSON**：加 `--json summary.json` 额外输出机器可读摘要，方便接调度或看板。
 
 ## 安装
 
@@ -53,6 +54,9 @@ insurance-audit --generate-mock
 
 # 审计已有文件，报告写到指定位置
 insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx
+
+# 审计并额外输出机器可读摘要（接调度/看板用）
+insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json reports/2026-11.json
 
 # 不带参数：读 .env 里的 DATA_INPUT_FILE，写 reports/DATA_OUTPUT_FILE
 insurance-audit
