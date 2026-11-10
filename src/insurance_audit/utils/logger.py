@@ -148,8 +148,12 @@ def setup_logging() -> None:
 
 
 def _console_stream() -> TextIO:
-    """返回一个不会因编码问题抛异常的 stdout 包装"""
-    stream = sys.stdout
+    """返回一个不会因编码问题抛异常的 stderr 包装
+
+    日志统一写 stderr，把 stdout 留给 ``--json`` 这类机器可读输出，
+    这样 ``insurance-audit --json > out.json`` 拿到的才是纯 JSON。
+    """
+    stream = sys.stderr
     reconfigure = getattr(stream, "reconfigure", None)
     if reconfigure is not None:
         with contextlib.suppress(ValueError, OSError):

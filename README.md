@@ -28,7 +28,7 @@
    - `异常数据`：只保留 `异常` 与 `解析失败` 的行；
    - `数据质量问题`：字段级校验问题（空值、精度、比例越界、保单号格式、跨字段矛盾）。
 4. **给退出码**：全部一致 `0`，有差异或解析失败 `1`，系统异常 `2`——可以直接当流水线闸门用。
-5. **可选 JSON**：加 `--json summary.json` 额外输出机器可读摘要，方便接调度或看板。
+5. **可选 JSON**：加 `--json` 把机器可读摘要打到 stdout（日志走 stderr，可直接管道），`--json-out summary.json` 同时落盘。
 
 ## 安装
 
@@ -55,8 +55,11 @@ insurance-audit --generate-mock
 # 审计已有文件，报告写到指定位置
 insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx
 
-# 审计并额外输出机器可读摘要（接调度/看板用）
-insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json reports/2026-11.json
+# 审计并把机器可读摘要输出到 stdout（接调度/看板用）
+insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json > reports/2026-11.json
+
+# 或者让工具直接把摘要落盘
+insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json-out reports/2026-11.json
 
 # 不带参数：读 .env 里的 DATA_INPUT_FILE，写 reports/DATA_OUTPUT_FILE
 insurance-audit

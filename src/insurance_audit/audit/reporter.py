@@ -8,6 +8,7 @@
 4. 数据质量问题（字段级校验结果）
 """
 
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import Any, Optional, Union
 
 import pandas as pd
 
-from insurance_audit import __app_name__, __version__
+from insurance_audit import __version__
 from insurance_audit.audit.reconciler import PARSE_ERROR_STATUS
 from insurance_audit.data.writer import auto_adjust_column_width
 from insurance_audit.models.claim import AuditSummary
@@ -92,33 +93,54 @@ def _apply_detail_formats(ws: Any, df: pd.DataFrame) -> None:
             continue
         idx = columns.index(col) + 1
         for row in range(2, len(df) + 2):
-            ws.cell(row=row, column=idx).number_format = "0.00"
+            # 存 0.8，显示 80.00% —— 既方便阅读又不破坏数值语义
+            ws.cell(row=row, column=idx).number_format = "0.00%"
 
 
-def write_json_report(
+def _sha256(path: Union[str, Path]) -> str:
+    """计算输入文件的 SHA-256，用于审计留痕；读不了时返回空串"""
+    digest = hashlib.sha256()
+    try:
+        with Path(path).open("rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def build_json_payload(
     summary: AuditSummary,
-    output_path: Union[str, Path],
     input_file: str = "",
     output_file: str = "",
-) -> Path:
+    validation_errors: Optional[list[DataValidationError]] = None,
+) -> dict[str, Any]:
     """
-    把审计摘要写成机器可读的 JSON 文件，便于接调度系统或看板。
+    构造机器可读摘要（``--json`` 输出到 stdout、``--json-out`` 落盘共用）。
 
-    与 Excel 报告互补：Excel 给人看，JSON 给程序读。明细不写入 JSON
-    （避免大文件），完整明细见 Excel 的「对账明细」sheet。
-
-    Returns:
-        JSON 文件的绝对路径
+    金额一律用字符串，避免经过浮点后丢精度；明细不写入 JSON（避免大文件），
+    完整明细见 Excel 的「对账明细」sheet。
     """
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    quality_issues: list[dict[str, Any]] = []
+    for err in validation_errors or []:
+        details = err.details or {}
+        quality_issues.append(
+            {
+                "row": details.get("row_index"),
+                "field": details.get("field"),
+                "reason": details.get("reason", str(err)),
+            }
+        )
 
-    payload = {
-        "app": __app_name__,
-        "version": __version__,
+    return {
+        "tool_version": __version__,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "input_file": input_file,
-        "output_file": output_file,
+        "input": {
+            "path": input_file,
+            "rows": summary.source_records,
+            "sha256": _sha256(input_file) if input_file else "",
+        },
+        "output": {"path": output_file},
         "summary": {
             "source_records": summary.source_records,
             "total_records": summary.total_records,
@@ -126,14 +148,24 @@ def write_json_report(
             "matched_records": summary.matched_records,
             "unmatched_records": summary.unmatched_records,
             "match_rate": summary.match_rate,
-            "execution_time": summary.execution_time,
             "total_claim_amount": str(summary.total_claim_amount),
             "total_actual_payout": str(summary.total_actual_payout),
             "total_calculated_payout": str(summary.total_calculated_payout),
             "total_discrepancy": str(summary.total_discrepancy),
         },
         "parse_errors": summary.parse_errors,
+        "quality_issues": quality_issues,
+        "execution_time": summary.execution_time,
     }
+
+
+def write_json_report(
+    payload: dict[str, Any],
+    output_path: Union[str, Path],
+) -> Path:
+    """把 JSON 摘要写入文件（供 ``--json-out`` 使用）"""
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
 
