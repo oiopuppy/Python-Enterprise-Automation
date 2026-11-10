@@ -1,6 +1,7 @@
 name: 缺陷报告
 description: 结果不对、崩溃、或和文档描述不一致
-labels: ["bug"]
+labels: ["bug", "status: triage"]
+assignees: ["oiopuppy"]
 body:
   - type: markdown
     attributes:
