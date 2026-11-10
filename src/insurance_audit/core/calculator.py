@@ -4,15 +4,13 @@
 核心业务逻辑，使用 Decimal 确保金融级精度。
 支持：
 1. 基础赔付计算
-2. 批量赔付计算
-3. 年度限额检查
-4. 业务规则验证
+2. 年度限额检查
+3. 业务规则验证
 """
 
 from decimal import Decimal
 from typing import Optional
 
-from insurance_audit.models.claim import ClaimRecord
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import (
     ClaimAmountExceedsLimitError,
@@ -83,31 +81,3 @@ def calculate_payout(
 
     logger.debug(f"赔付计算: 报案={claim_amount} 免赔={deductible} 比例={ratio} -> 赔付={result}")
     return result
-
-
-def batch_calculate(records: list[ClaimRecord]) -> list[ClaimRecord]:
-    """
-    批量赔付计算
-
-    Args:
-        records: 理赔记录列表
-
-    Returns:
-        计算完成后的记录列表（calculated_payout 字段已填充）
-    """
-    logger.info(f"开始批量赔付计算，共 {len(records)} 条记录")
-    processed = 0
-    errors = 0
-
-    for record in records:
-        try:
-            record.calculated_payout = record.calculate_payout()
-            processed += 1
-        except Exception as e:
-            errors += 1
-            logger.error(f"计算失败 — 保单 {record.policy_id}: {e}")
-            record.calculated_payout = None
-            record.audit_status = f"计算失败: {type(e).__name__}"
-
-    logger.info(f"批量计算完成: 成功={processed}, 失败={errors}")
-    return records

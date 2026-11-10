@@ -19,8 +19,10 @@
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 from insurance_audit import __app_name__, __version__
+from insurance_audit.audit.reporter import write_json_report
 from insurance_audit.core.engine import AuditEngine
 from insurance_audit.data.generator import generate_mock_data
 from insurance_audit.utils.config import settings
@@ -79,12 +81,21 @@ def check_environment(input_path: Path) -> bool:
 # =============================================================================
 
 
-def run_audit(input_path: Path, output_path: Path) -> int:
+def run_audit(
+    input_path: Path,
+    output_path: Path,
+    json_path: Optional[Path] = None,
+) -> int:
     """
     执行完整的审计工作流
 
     具体的「读取 → 校验 → 对账 → 报告」由 AuditEngine 统一编排，
     这里只负责日志、审计追溯与退出码。
+
+    Args:
+        input_path: 待审计的 Excel 路径
+        output_path: 审计报告输出路径
+        json_path: 可选的 JSON 摘要输出路径（便于接调度/看板）
 
     Returns:
         0 = 全部对账一致；1 = 存在对账异常或解析失败
@@ -95,6 +106,14 @@ def run_audit(input_path: Path, output_path: Path) -> int:
     logger.info("\n[阶段 1/2] 执行审计引擎（读取 → 校验 → 对账 → 报告）...")
     engine = AuditEngine(input_file=str(input_path), output_file=str(output_path))
     summary = engine.run()
+
+    if json_path is not None:
+        write_json_report(
+            summary,
+            json_path,
+            input_file=str(input_path),
+            output_file=str(output_path),
+        )
 
     audit.safe_log(
         "RECONCILIATION_DONE",
@@ -165,6 +184,11 @@ def main() -> None:
         default=None,
         help="审计报告输出路径（默认写入配置中的 reports/ 目录）",
     )
+    parser.add_argument(
+        "--json",
+        default=None,
+        help="额外输出 JSON 摘要（机器可读，便于接调度/看板）",
+    )
     args = parser.parse_args()
 
     # 日志配置必须在任何文件写入之前完成（库模块 import 时不建日志文件）
@@ -172,6 +196,7 @@ def main() -> None:
 
     input_path = Path(args.input) if args.input else settings.data.input_path
     output_path = Path(args.output) if args.output else settings.data.output_path
+    json_path = Path(args.json) if args.json else None
 
     logger.info(f"{__app_name__} v{__version__} 启动")
 
@@ -189,7 +214,7 @@ def main() -> None:
             logger.info("   insurance-audit --generate-mock")
             exit_code = EXIT_AUDIT_ISSUE
         else:
-            exit_code = run_audit(input_path, output_path)
+            exit_code = run_audit(input_path, output_path, json_path)
 
     except DataException as e:
         logger.error(f"[ERR] 数据异常: {e}")

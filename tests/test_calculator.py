@@ -6,17 +6,13 @@
 2. 边界条件（等于免赔额、巨额赔付）
 3. 异常场景（负数、无效比例、超限）
 4. 精度验证（ROUND_HALF_UP）
-5. 批量计算
 """
 
 from decimal import Decimal
 
 import pytest
 
-from insurance_audit.core.calculator import (
-    batch_calculate,
-    calculate_payout,
-)
+from insurance_audit.core.calculator import calculate_payout
 from insurance_audit.utils.exceptions import (
     ClaimAmountExceedsLimitError,
     InvalidDeductibleError,
@@ -154,22 +150,3 @@ class TestCalculatePayout:
         """超过年度赔付上限"""
         with pytest.raises(ClaimAmountExceedsLimitError):
             calculate_payout(Decimal("999999"), Decimal("0"), Decimal("1.00"))
-
-
-class TestBatchCalculate:
-    """批量计算测试"""
-
-    @pytest.mark.unit
-    def test_batch_normal(self, sample_records: list) -> None:
-        """批量正常计算"""
-        results = batch_calculate(sample_records)
-        assert len(results) == 3
-        assert results[0].calculated_payout == Decimal("400.00")
-        assert results[1].calculated_payout == Decimal("0.00")
-        assert results[2].calculated_payout == Decimal("3570.00")
-
-    @pytest.mark.unit
-    def test_batch_empty(self) -> None:
-        """空列表"""
-        results = batch_calculate([])
-        assert results == []

@@ -40,6 +40,18 @@ def read_excel(file_path: Union[str, Path]) -> pd.DataFrame:
     if path.suffix.lower() not in (".xlsx", ".xls"):
         logger.warning(f"文件扩展名非标准Excel格式: {path.suffix}")
 
+    if path.suffix.lower() == ".xls":
+        try:
+            import xlrd  # noqa: F401
+        except ImportError as e:
+            raise IOFailure(
+                operation="read_excel",
+                path=str(path.absolute()),
+                original_error=(
+                    "读取 .xls 需要 xlrd：pip install xlrd，或把文件另存为 .xlsx 后重试"
+                ),
+            ) from e
+
     try:
         logger.info(f"正在读取数据文件: {path.name}")
         df = pd.read_excel(
