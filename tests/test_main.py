@@ -15,6 +15,8 @@ import pytest
 
 from insurance_audit import main as main_module
 from insurance_audit.data.generator import generate_mock_data
+from insurance_audit.main import resolve_exit_code
+from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.exceptions import (
     BusinessException,
     DataException,
@@ -318,3 +320,136 @@ class TestExceptionToExitCode:
         assert target.exists()
         # 默认会注入约 10% 的差异，因此退出码可能是 0 或 1；这里只验证落盘位置
         assert code in (0, 1)
+
+
+class TestFailOnPolicy:
+    """--fail-on 闸门策略矩阵"""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("scenario", "summary", "expected"),
+        [
+            # 全部一致：四种策略都不阻断
+            ("clean", AuditSummary(), (0, 0, 0, 0)),
+            # 只有轻微差异
+            ("minor", AuditSummary(unmatched_records=1, minor_records=1), (1, 0, 0, 0)),
+            # 有重大差异
+            ("material", AuditSummary(unmatched_records=1, material_records=1), (1, 1, 0, 0)),
+            # 只有解析失败
+            ("parse", AuditSummary(parse_error_records=1), (1, 0, 1, 0)),
+            # 差异 + 解析失败
+            (
+                "both",
+                AuditSummary(unmatched_records=1, minor_records=1, parse_error_records=1),
+                (1, 0, 1, 0),
+            ),
+        ],
+    )
+    def test_matrix(
+        self,
+        scenario: str,
+        summary: AuditSummary,
+        expected: tuple[int, int, int, int],
+    ) -> None:
+        strategies = ("any", "material", "parse-error", "none")
+        actual = tuple(resolve_exit_code(summary, strategy) for strategy in strategies)
+        assert actual == expected, scenario
+
+    @pytest.mark.integration
+    def test_minor_difference_passes_material_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """0.5 元差异：默认 any 退出 1，material 闸门放行"""
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100"],
+                "客户姓名": ["张三"],
+                "报案金额": [100.0],
+                "免赔额": [0.0],
+                "赔付比例": [0.80],
+                "实际赔付金额": [80.5],
+            }
+        )
+        input_file = tmp_path / "minor.xlsx"
+        df.to_excel(input_file, index=False)
+
+        common = ["--input", str(input_file), "--output", str(tmp_path / "r.xlsx")]
+        assert _run_main(monkeypatch, *common) == 1
+        assert _run_main(monkeypatch, *common, "--fail-on", "material") == 0
+        assert _run_main(monkeypatch, *common, "--fail-on", "none") == 0
+
+    @pytest.mark.integration
+    def test_material_gate_blocks_big_difference(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """大额差异在 material 闸门下仍退出 1"""
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100"],
+                "客户姓名": ["张三"],
+                "报案金额": [1000.0],
+                "免赔额": [0.0],
+                "赔付比例": [0.80],
+                "实际赔付金额": [1500.0],
+            }
+        )
+        input_file = tmp_path / "material.xlsx"
+        df.to_excel(input_file, index=False)
+
+        code = _run_main(
+            monkeypatch,
+            "--input",
+            str(input_file),
+            "--output",
+            str(tmp_path / "r.xlsx"),
+            "--fail-on",
+            "material",
+        )
+        assert code == 1
+
+    @pytest.mark.integration
+    def test_report_marks_level_and_color(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """明细带差异级别，重大差异单元格有填充色"""
+        from openpyxl import load_workbook
+
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100", "CL9900101"],
+                "客户姓名": ["张三", "李四"],
+                "报案金额": [1000.0, 2000.0],
+                "免赔额": [0.0, 0.0],
+                "赔付比例": [0.80, 0.80],
+                "实际赔付金额": [805.0, 1600.0],
+            }
+        )
+        input_file = tmp_path / "levels.xlsx"
+        df.to_excel(input_file, index=False)
+        report_file = tmp_path / "report.xlsx"
+
+        _run_main(monkeypatch, "--input", str(input_file), "--output", str(report_file))
+
+        detail = pd.read_excel(report_file, sheet_name="对账明细")
+        assert list(detail["差异级别"]) == ["一般", "一致"]
+
+        wb = load_workbook(report_file)
+        ws = wb["对账明细"]
+        headers = [cell.value for cell in ws[1]]
+        level_col = headers.index("差异级别") + 1
+        assert ws.cell(row=2, column=level_col).fill.start_color.rgb.endswith("FFEB9C")
+
+    @pytest.mark.integration
+    def test_summary_contains_level_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """摘要列出轻微/一般/重大三个计数"""
+        input_file = tmp_path / "input.xlsx"
+        generate_mock_data(num_records=10, output_file=str(input_file), anomaly_ratio=1.0, seed=3)
+        report_file = tmp_path / "report.xlsx"
+
+        _run_main(monkeypatch, "--input", str(input_file), "--output", str(report_file))
+
+        summary = pd.read_excel(report_file, sheet_name="审计摘要")
+        for label in ("轻微差异", "一般差异", "重大差异"):
+            assert label in set(summary["审计项目"])

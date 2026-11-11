@@ -12,7 +12,15 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from insurance_audit.models.claim import ClaimRecord
+from insurance_audit.models.claim import (
+    DIFF_LEVEL_MATCH,
+    DIFF_LEVEL_MATERIAL,
+    DIFF_LEVEL_MINOR,
+    DIFF_LEVEL_NORMAL,
+    ClaimRecord,
+    classify_difference,
+    tolerance_for,
+)
 
 
 class TestClaimRecord:
@@ -113,3 +121,25 @@ class TestClaimRecord:
         is_match, diff = record.reconcile()
         assert not is_match
         assert diff > Decimal("0.005")
+
+
+class TestDifferenceClassification:
+    """容差与差异级别"""
+
+    @pytest.mark.unit
+    def test_tolerance_uses_larger_of_absolute_and_relative(self) -> None:
+        assert tolerance_for(Decimal("100.00")) == Decimal("0.10")
+        assert tolerance_for(Decimal("100000.00")) == Decimal("100.00")
+
+    @pytest.mark.unit
+    def test_classify_four_levels(self) -> None:
+        tolerance = Decimal("0.01")
+        assert classify_difference(Decimal("0.005"), tolerance) == DIFF_LEVEL_MATCH
+        assert classify_difference(Decimal("0.50"), tolerance) == DIFF_LEVEL_MINOR
+        assert classify_difference(Decimal("5.00"), tolerance) == DIFF_LEVEL_NORMAL
+        assert classify_difference(Decimal("150.00"), tolerance) == DIFF_LEVEL_MATERIAL
+
+    @pytest.mark.unit
+    def test_boundary_is_inclusive_for_material(self) -> None:
+        """恰好 100 元按「重大」处理"""
+        assert classify_difference(Decimal("100.00"), Decimal("0.01")) == DIFF_LEVEL_MATERIAL
