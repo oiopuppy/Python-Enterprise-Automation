@@ -18,9 +18,13 @@ import pandas as pd
 
 from insurance_audit import __version__
 from insurance_audit.audit.reconciler import PARSE_ERROR_STATUS
+from insurance_audit.core.validator import (
+    CODE_CUSTOMER_MISMATCH,
+    CODE_DUPLICATE_POLICY,
+    FieldIssue,
+)
 from insurance_audit.data.writer import auto_adjust_column_width
 from insurance_audit.models.claim import AuditSummary
-from insurance_audit.utils.exceptions import DataValidationError
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +45,7 @@ def _build_summary_rows(summary: AuditSummary) -> list[tuple[str, object, str]]:
         ("读取总行数", summary.source_records, "条"),
         ("成功解析", summary.total_records, "条"),
         ("无法解析", summary.parse_error_records, "条"),
+        ("重复保单组数", summary.duplicate_policy_groups, "组"),
         ("一致记录数", summary.matched_records, "条"),
         ("异常记录数", summary.unmatched_records, "条"),
         ("一致率", summary.match_rate, "%"),
@@ -52,25 +57,32 @@ def _build_summary_rows(summary: AuditSummary) -> list[tuple[str, object, str]]:
 
 
 def _build_quality_rows(
-    validation_errors: list[DataValidationError],
+    validation_issues: list[FieldIssue],
     summary: AuditSummary,
 ) -> list[dict[str, object]]:
-    """构造数据质量问题明细：字段级校验错误 + 无法解析记录"""
+    """构造数据质量问题明细：字段问题 + 重复保单/跨行问题 + 无法解析记录"""
     rows: list[dict[str, object]] = []
-    for err in validation_errors:
-        details = err.details or {}
+    for issue in validation_issues:
+        if issue.code == CODE_DUPLICATE_POLICY:
+            issue_type = "重复保单"
+        elif issue.code == CODE_CUSTOMER_MISMATCH:
+            issue_type = "跨行不一致"
+        else:
+            issue_type = "字段校验"
         rows.append(
             {
-                "问题类型": "字段校验",
-                "行号": details.get("row_index", ""),
-                "字段": details.get("field", ""),
-                "原因": details.get("reason", str(err)),
+                "问题类型": issue_type,
+                "问题代码": issue.code,
+                "行号": issue.row,
+                "字段": issue.field,
+                "原因": issue.message,
             }
         )
     for parse_err in summary.parse_errors:
         rows.append(
             {
                 "问题类型": "无法解析",
+                "问题代码": "PARSE_ERROR",
                 "行号": parse_err.get("row", ""),
                 "字段": "整行",
                 "原因": parse_err.get("reason", ""),
@@ -113,7 +125,7 @@ def build_json_payload(
     summary: AuditSummary,
     input_file: str = "",
     output_file: str = "",
-    validation_errors: Optional[list[DataValidationError]] = None,
+    validation_errors: Optional[list[FieldIssue]] = None,
 ) -> dict[str, Any]:
     """
     构造机器可读摘要（``--json`` 输出到 stdout、``--json-out`` 落盘共用）。
@@ -122,13 +134,13 @@ def build_json_payload(
     完整明细见 Excel 的「对账明细」sheet。
     """
     quality_issues: list[dict[str, Any]] = []
-    for err in validation_errors or []:
-        details = err.details or {}
+    for issue in validation_errors or []:
         quality_issues.append(
             {
-                "row": details.get("row_index"),
-                "field": details.get("field"),
-                "reason": details.get("reason", str(err)),
+                "row": issue.row,
+                "field": issue.field,
+                "code": issue.code,
+                "reason": issue.message,
             }
         )
 
@@ -178,7 +190,7 @@ def generate_report(
     detail_df: pd.DataFrame,
     summary: AuditSummary,
     output_path: Union[str, Path],
-    validation_errors: Optional[list[DataValidationError]] = None,
+    validation_errors: Optional[list[FieldIssue]] = None,
 ) -> Path:
     """
     生成完整的审计报告 Excel 文件（多Sheet）
@@ -187,13 +199,13 @@ def generate_report(
     - Sheet 1: 审计摘要（含读取/解析/对账行数，保证行数可核对）
     - Sheet 2: 对账明细（解析失败的行也在内，状态为「解析失败」）
     - Sheet 3: 异常数据（对账异常 + 解析失败）
-    - Sheet 4: 数据质量问题（字段级校验错误，可能为空）
+    - Sheet 4: 数据质量问题（字段级问题 + 重复保单/跨行问题 + 无法解析，可能为空）
 
     Args:
         detail_df: 对账明细 DataFrame
         summary: 审计摘要
         output_path: 输出文件路径
-        validation_errors: 可选的字段级校验错误列表
+        validation_errors: 可选的数据质量问题列表
 
     Returns:
         输出文件的绝对路径
@@ -221,7 +233,7 @@ def generate_report(
     quality_rows = _build_quality_rows(validation_errors or [], summary)
     quality_df = pd.DataFrame(
         quality_rows,
-        columns=["问题类型", "行号", "字段", "原因"],
+        columns=["问题类型", "问题代码", "行号", "字段", "原因"],
     )
 
     # --- 写入 Excel ---

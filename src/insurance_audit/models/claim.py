@@ -147,4 +147,5 @@ class AuditSummary(BaseModel):
     total_calculated_payout: Decimal = Decimal("0.00")
     total_discrepancy: Decimal = Decimal("0.00")
     execution_time: str = ""
+    duplicate_policy_groups: int = Field(default=0, description="重复保单号组数")
     details: list[dict[str, Any]] = Field(default_factory=list)
