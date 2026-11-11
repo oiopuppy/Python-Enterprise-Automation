@@ -149,11 +149,27 @@ class FileNotFoundError(DataException):
 class InvalidColumnError(DataException):
     """Excel列名缺失"""
 
-    def __init__(self, missing_columns: list[str]) -> None:
+    def __init__(
+        self,
+        missing_columns: list[str],
+        identified_columns: Optional[list[str]] = None,
+        expected_columns: Optional[list[str]] = None,
+    ) -> None:
+        identified = identified_columns or []
+        expected = expected_columns or []
+        parts = [f"数据文件缺少必要列: {missing_columns}"]
+        if identified:
+            parts.append(f"已识别的列: {identified}")
+        if expected:
+            parts.append(f"期望的列名: {expected}")
         super().__init__(
-            message=f"数据文件缺少必要列: {missing_columns}",
+            message="；".join(parts),
             error_code="DAT-0102",
-            details={"missing_columns": missing_columns},
+            details={
+                "missing_columns": missing_columns,
+                "identified_columns": identified,
+                "expected_columns": expected,
+            },
         )
 
 
