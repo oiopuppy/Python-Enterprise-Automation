@@ -5,16 +5,18 @@
 支持编程式调用 vs CLI 调用两种模式。
 """
 
+import json
 import time
-from typing import Optional
+from typing import Any, Optional
 
+from insurance_audit.audit.manifest import build_manifest
 from insurance_audit.audit.reconciler import reconcile_dataframe
 from insurance_audit.audit.reporter import generate_report
 from insurance_audit.core.validator import CODE_DUPLICATE_POLICY, FieldIssue, validate_dataframe
 from insurance_audit.data.reader import read_excel
 from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
-from insurance_audit.utils.logger import get_logger
+from insurance_audit.utils.logger import get_audit_logger, get_logger
 
 logger = get_logger(__name__)
 
@@ -38,6 +40,8 @@ class AuditEngine:
         self.summary: Optional[AuditSummary] = None
         # 字段级校验问题：供 --json 的 quality_issues 使用
         self.validation_errors: list[FieldIssue] = []
+        # 审计留痕清单：输入哈希、版本与生效配置
+        self.manifest: Optional[dict[str, Any]] = None
 
     def run(self) -> AuditSummary:
         """
@@ -51,6 +55,8 @@ class AuditEngine:
 
         # 1. 读取数据
         df = read_excel(self.input_file)
+        manifest = build_manifest(self.input_file, rows=len(df), output_path=self.output_file)
+        self.manifest = manifest
 
         # 2. 数据校验
         validation_errors = validate_dataframe(df)
@@ -72,6 +78,27 @@ class AuditEngine:
             summary,
             self.output_file,
             validation_errors=validation_errors,
+            manifest=manifest,
+        )
+
+        # 5. 审计留痕：记录本次审计的输入指纹与关键配置
+        get_audit_logger().safe_log(
+            "AUDIT_COMPLETE",
+            json.dumps(
+                {
+                    "input": manifest["input"],
+                    "output": manifest.get("output"),
+                    "tool_version": manifest["tool_version"],
+                    "config": manifest["config"],
+                    "summary": {
+                        "source_records": summary.source_records,
+                        "matched_records": summary.matched_records,
+                        "unmatched_records": summary.unmatched_records,
+                        "parse_error_records": summary.parse_error_records,
+                    },
+                },
+                ensure_ascii=False,
+            ),
         )
 
         logger.info("审计引擎工作流完成")

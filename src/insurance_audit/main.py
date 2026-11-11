@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from insurance_audit import __app_name__, __version__
+from insurance_audit.audit.manifest import write_manifest
 from insurance_audit.audit.reporter import build_json_payload, write_json_report
 from insurance_audit.core.engine import AuditEngine
 from insurance_audit.data.generator import generate_mock_data
@@ -102,6 +103,7 @@ def run_audit(
     output_path: Path,
     emit_json: bool = False,
     json_out: Optional[Path] = None,
+    manifest_out: Optional[Path] = None,
 ) -> int:
     """
     执行完整的审计工作流
@@ -114,6 +116,7 @@ def run_audit(
         output_path: 审计报告输出路径
         emit_json: 是否把 JSON 摘要打印到 stdout（日志走 stderr，stdout 保持纯 JSON）
         json_out: 可选的 JSON 摘要落盘路径
+        manifest_out: 可选的审计清单落盘路径（输入哈希/版本/配置）
 
     Returns:
         0 = 全部对账一致；1 = 存在对账异常或解析失败
@@ -137,6 +140,9 @@ def run_audit(
             _write_json_stdout(payload)
         if json_out is not None:
             write_json_report(payload, json_out)
+
+    if manifest_out is not None and engine.manifest is not None:
+        write_manifest(engine.manifest, manifest_out)
 
     audit.safe_log(
         "RECONCILIATION_DONE",
@@ -217,6 +223,11 @@ def main() -> None:
         default=None,
         help="同时把 JSON 摘要写入指定文件",
     )
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="额外输出一份 JSON 审计清单（输入 SHA256、工具版本与关键配置）",
+    )
     args = parser.parse_args()
 
     # 日志配置必须在任何文件写入之前完成（库模块 import 时不建日志文件）
@@ -225,6 +236,7 @@ def main() -> None:
     input_path = Path(args.input) if args.input else settings.data.input_path
     output_path = Path(args.output) if args.output else settings.data.output_path
     json_out = Path(args.json_out) if args.json_out else None
+    manifest_out = Path(args.manifest) if args.manifest else None
 
     logger.info(f"{__app_name__} v{__version__} 启动")
 
@@ -242,7 +254,7 @@ def main() -> None:
             logger.info("   insurance-audit --generate-mock")
             exit_code = EXIT_AUDIT_ISSUE
         else:
-            exit_code = run_audit(input_path, output_path, args.json, json_out)
+            exit_code = run_audit(input_path, output_path, args.json, json_out, manifest_out)
 
     except DataException as e:
         logger.error(f"[ERR] 数据异常: {e}")
