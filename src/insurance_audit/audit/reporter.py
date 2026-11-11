@@ -8,7 +8,6 @@
 4. 数据质量问题（字段级校验结果）
 """
 
-import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +16,7 @@ from typing import Any, Optional, Union
 import pandas as pd
 
 from insurance_audit import __version__
+from insurance_audit.audit.manifest import file_fingerprint
 from insurance_audit.audit.reconciler import PARSE_ERROR_STATUS
 from insurance_audit.core.validator import (
     CODE_CUSTOMER_MISMATCH,
@@ -25,6 +25,7 @@ from insurance_audit.core.validator import (
 )
 from insurance_audit.data.writer import auto_adjust_column_width
 from insurance_audit.models.claim import AuditSummary
+from insurance_audit.utils.exceptions import IOFailure
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,9 +39,12 @@ DETAIL_AMOUNT_COLUMNS = ("报案金额", "免赔额", "原始赔付金额", "系
 DETAIL_RATIO_COLUMNS = ("赔付比例",)
 
 
-def _build_summary_rows(summary: AuditSummary) -> list[tuple[str, object, str]]:
+def _build_summary_rows(
+    summary: AuditSummary,
+    manifest: Optional[dict[str, Any]] = None,
+) -> list[tuple[str, object, str]]:
     """构造审计摘要的三列表格：项目 / 数值 / 单位"""
-    return [
+    rows: list[tuple[str, object, str]] = [
         ("审计时间", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ""),
         ("读取总行数", summary.source_records, "条"),
         ("成功解析", summary.total_records, "条"),
@@ -54,6 +58,19 @@ def _build_summary_rows(summary: AuditSummary) -> list[tuple[str, object, str]]:
         ("总系统核算", float(summary.total_calculated_payout), "元"),
         ("总差异金额", float(summary.total_discrepancy), "元"),
     ]
+    if manifest is not None:
+        config = manifest.get("config", {})
+        rows.extend(
+            [
+                ("输入文件 SHA256", manifest.get("input", {}).get("sha256", ""), ""),
+                ("输入文件字节数", manifest.get("input", {}).get("bytes", 0), "字节"),
+                ("工具版本", manifest.get("tool_version", ""), ""),
+                ("Python 版本", manifest.get("python_version", ""), ""),
+                ("默认免赔额", float(config.get("default_deductible", 0)), "元"),
+                ("默认赔付比例", float(config.get("default_ratio", 0)) * 100, "%"),
+            ]
+        )
+    return rows
 
 
 def _build_quality_rows(
@@ -109,18 +126,6 @@ def _apply_detail_formats(ws: Any, df: pd.DataFrame) -> None:
             ws.cell(row=row, column=idx).number_format = "0.00%"
 
 
-def _sha256(path: Union[str, Path]) -> str:
-    """计算输入文件的 SHA-256，用于审计留痕；读不了时返回空串"""
-    digest = hashlib.sha256()
-    try:
-        with Path(path).open("rb") as fh:
-            for chunk in iter(lambda: fh.read(65536), b""):
-                digest.update(chunk)
-    except OSError:
-        return ""
-    return digest.hexdigest()
-
-
 def build_json_payload(
     summary: AuditSummary,
     input_file: str = "",
@@ -144,13 +149,20 @@ def build_json_payload(
             }
         )
 
+    input_sha256 = ""
+    if input_file:
+        try:
+            input_sha256 = str(file_fingerprint(input_file)["sha256"])
+        except IOFailure:
+            input_sha256 = ""
+
     return {
         "tool_version": __version__,
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "input": {
             "path": input_file,
             "rows": summary.source_records,
-            "sha256": _sha256(input_file) if input_file else "",
+            "sha256": input_sha256,
         },
         "output": {"path": output_file},
         "summary": {
@@ -191,6 +203,7 @@ def generate_report(
     summary: AuditSummary,
     output_path: Union[str, Path],
     validation_errors: Optional[list[FieldIssue]] = None,
+    manifest: Optional[dict[str, Any]] = None,
 ) -> Path:
     """
     生成完整的审计报告 Excel 文件（多Sheet）
@@ -206,6 +219,7 @@ def generate_report(
         summary: 审计摘要
         output_path: 输出文件路径
         validation_errors: 可选的数据质量问题列表
+        manifest: 可选的审计留痕清单（输入哈希/版本/配置），写入摘要 sheet
 
     Returns:
         输出文件的绝对路径
@@ -214,7 +228,7 @@ def generate_report(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Sheet 1: 审计摘要 ---
-    summary_rows = _build_summary_rows(summary)
+    summary_rows = _build_summary_rows(summary, manifest)
     summary_df = pd.DataFrame(
         summary_rows,
         columns=["审计项目", "数值", "单位"],

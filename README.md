@@ -29,6 +29,7 @@
    - `数据质量问题`：字段级校验问题（空值、精度、比例越界、保单号格式、跨字段矛盾）。
 4. **给退出码**：全部一致 `0`，有差异或解析失败 `1`，系统异常 `2`——可以直接当流水线闸门用。
 5. **可选 JSON**：加 `--json` 把机器可读摘要打到 stdout（日志走 stderr，可直接管道），`--json-out summary.json` 同时落盘。
+6. **审计留痕**：加 `--manifest manifest.json` 输出输入文件 SHA256、字节数、工具版本与关键配置；同一输入两次运行，清单除时间外完全一致。
 
 ## 安装
 
@@ -60,6 +61,9 @@ insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json > 
 
 # 或者让工具直接把摘要落盘
 insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json-out reports/2026-11.json
+
+# 同时输出审计清单（输入哈希/版本/配置，便于归档）
+insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --manifest reports/2026-11.manifest.json
 
 # 不带参数：读 .env 里的 DATA_INPUT_FILE，写 reports/DATA_OUTPUT_FILE
 insurance-audit
