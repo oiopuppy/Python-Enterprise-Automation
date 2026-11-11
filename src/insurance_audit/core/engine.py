@@ -10,11 +10,10 @@ from typing import Optional
 
 from insurance_audit.audit.reconciler import reconcile_dataframe
 from insurance_audit.audit.reporter import generate_report
-from insurance_audit.core.validator import validate_dataframe
+from insurance_audit.core.validator import CODE_DUPLICATE_POLICY, FieldIssue, validate_dataframe
 from insurance_audit.data.reader import read_excel
 from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
-from insurance_audit.utils.exceptions import DataValidationError
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,7 +37,7 @@ class AuditEngine:
         self.output_file = output_file or str(settings.data.output_path)
         self.summary: Optional[AuditSummary] = None
         # 字段级校验问题：供 --json 的 quality_issues 使用
-        self.validation_errors: list[DataValidationError] = []
+        self.validation_errors: list[FieldIssue] = []
 
     def run(self) -> AuditSummary:
         """
@@ -62,6 +61,9 @@ class AuditEngine:
         # 3. 执行对账
         result_df, summary = reconcile_dataframe(df)
         summary.execution_time = f"{time.perf_counter() - started:.2f}s"
+        summary.duplicate_policy_groups = sum(
+            1 for issue in validation_errors if issue.code == CODE_DUPLICATE_POLICY
+        )
         self.summary = summary
 
         # 4. 生成报告

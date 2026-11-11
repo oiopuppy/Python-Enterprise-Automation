@@ -260,6 +260,47 @@ class TestExceptionToExitCode:
         ratio_col = headers.index("赔付比例") + 1
         assert ws.cell(row=2, column=ratio_col).number_format == "0.00%"
 
+    @pytest.mark.integration
+    def test_duplicate_policy_rows_kept_and_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """重复保单行照常参与对账，并在质量问题里带问题代码列出行号"""
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100", "CL9900100", "CL9900101"],
+                "客户姓名": ["张三", "张三", "李四"],
+                "报案金额": [1000.0, 2000.0, 3000.0],
+                "免赔额": [500.0, 500.0, 500.0],
+                "赔付比例": [0.80, 0.80, 0.80],
+                "实际赔付金额": [400.0, 1200.0, 2000.0],
+            }
+        )
+        input_file = tmp_path / "duplicated.xlsx"
+        df.to_excel(input_file, index=False)
+        report_file = tmp_path / "report.xlsx"
+
+        code = _run_main(
+            monkeypatch,
+            "--input",
+            str(input_file),
+            "--output",
+            str(report_file),
+        )
+        assert code == 0  # 重复保单只提示，不改变对账结论
+
+        detail = pd.read_excel(report_file, sheet_name="对账明细")
+        assert len(detail) == 3  # 重复行一条都不能少
+
+        quality = pd.read_excel(report_file, sheet_name="数据质量问题")
+        assert "问题代码" in quality.columns
+        assert "DUPLICATE_POLICY" in set(quality["问题代码"])
+        duplicate_row = quality[quality["问题代码"] == "DUPLICATE_POLICY"].iloc[0]
+        assert "第 2、3 行" in str(duplicate_row["原因"])
+
+        summary = pd.read_excel(report_file, sheet_name="审计摘要")
+        groups = summary.loc[summary["审计项目"] == "重复保单组数", "数值"].iloc[0]
+        assert int(groups) == 1
+
     @pytest.mark.unit
     def test_generate_mock_writes_to_requested_input(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
