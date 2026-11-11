@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import pandas as pd
+from openpyxl.styles import Font, PatternFill
 
 from insurance_audit import __version__
 from insurance_audit.audit.manifest import file_fingerprint
@@ -38,6 +39,18 @@ DETAIL_AMOUNT_COLUMNS = ("报案金额", "免赔额", "原始赔付金额", "系
 # 对账明细中按比例显示的列
 DETAIL_RATIO_COLUMNS = ("赔付比例",)
 
+# 差异级别配色：重大红、一般橙、轻微黄
+DIFF_LEVEL_FILLS = {
+    "重大": PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"),
+    "一般": PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid"),
+    "轻微": PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid"),
+}
+DIFF_LEVEL_FONTS = {
+    "重大": Font(color="9C0006", bold=True),
+    "一般": Font(color="9C6500"),
+    "轻微": Font(color="7F6000"),
+}
+
 
 def _build_summary_rows(
     summary: AuditSummary,
@@ -52,6 +65,9 @@ def _build_summary_rows(
         ("重复保单组数", summary.duplicate_policy_groups, "组"),
         ("一致记录数", summary.matched_records, "条"),
         ("异常记录数", summary.unmatched_records, "条"),
+        ("轻微差异", summary.minor_records, "条"),
+        ("一般差异", summary.normal_records, "条"),
+        ("重大差异", summary.material_records, "条"),
         ("一致率", summary.match_rate, "%"),
         ("总报案金额", float(summary.total_claim_amount), "元"),
         ("总原始赔付", float(summary.total_actual_payout), "元"),
@@ -125,6 +141,23 @@ def _apply_detail_formats(ws: Any, df: pd.DataFrame) -> None:
             # 存 0.8，显示 80.00% —— 既方便阅读又不破坏数值语义
             ws.cell(row=row, column=idx).number_format = "0.00%"
 
+    # 差异级别着色：重大/一般/轻微整格填充，让大额差异先跳出来
+    if "差异级别" not in columns:
+        return
+    level_idx = columns.index("差异级别") + 1
+    amount_idx = columns.index("差异金额") + 1 if "差异金额" in columns else None
+    for offset, level in enumerate(df["差异级别"].tolist()):
+        fill = DIFF_LEVEL_FILLS.get(str(level))
+        if fill is None:
+            continue
+        font = DIFF_LEVEL_FONTS.get(str(level))
+        row = offset + 2
+        ws.cell(row=row, column=level_idx).fill = fill
+        if font is not None:
+            ws.cell(row=row, column=level_idx).font = font
+        if amount_idx is not None:
+            ws.cell(row=row, column=amount_idx).fill = fill
+
 
 def build_json_payload(
     summary: AuditSummary,
@@ -171,6 +204,9 @@ def build_json_payload(
             "parse_error_records": summary.parse_error_records,
             "matched_records": summary.matched_records,
             "unmatched_records": summary.unmatched_records,
+            "minor_records": summary.minor_records,
+            "normal_records": summary.normal_records,
+            "material_records": summary.material_records,
             "match_rate": summary.match_rate,
             "total_claim_amount": str(summary.total_claim_amount),
             "total_actual_payout": str(summary.total_actual_payout),

@@ -17,7 +17,13 @@ from typing import Any, Union
 
 import pandas as pd
 
-from insurance_audit.models.claim import AuditSummary, ClaimRecord
+from insurance_audit.models.claim import (
+    DIFF_LEVEL_MATERIAL,
+    DIFF_LEVEL_MINOR,
+    DIFF_LEVEL_NORMAL,
+    AuditSummary,
+    ClaimRecord,
+)
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +99,9 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     # 执行对账
     matched = 0
     unmatched = 0
+    minor = 0
+    normal = 0
+    material = 0
     total_discrepancy = Decimal("0.00")
     total_calculated = Decimal("0.00")
     total_actual = Decimal("0.00")
@@ -108,8 +117,14 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
             matched += 1
         else:
             unmatched += 1
+            if record.diff_level == DIFF_LEVEL_MINOR:
+                minor += 1
+            elif record.diff_level == DIFF_LEVEL_NORMAL:
+                normal += 1
+            elif record.diff_level == DIFF_LEVEL_MATERIAL:
+                material += 1
             logger.warning(
-                f"对账差异 — {record.policy_id}: "
+                f"对账差异[{record.diff_level}] — {record.policy_id}: "
                 f"核算={record.calculated_payout} "
                 f"原始={record.actual_payout} "
                 f"差异={diff}"
@@ -126,6 +141,7 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
                 "系统核算金额": float(record.calculated_payout or Decimal("0.00")),
                 "差异金额": float(diff),
                 "审计状态": record.audit_status or "",
+                "差异级别": record.diff_level or "",
             }
         )
 
@@ -142,6 +158,7 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
                 "系统核算金额": None,
                 "差异金额": None,
                 "审计状态": PARSE_ERROR_STATUS,
+                "差异级别": "—",
             }
         )
 
@@ -156,6 +173,9 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
         parse_errors=parse_errors,
         matched_records=matched,
         unmatched_records=unmatched,
+        minor_records=minor,
+        normal_records=normal,
+        material_records=material,
         match_rate=round(matched / len(records) * 100 if records else 0.0, 2),
         total_claim_amount=sum((r.claim_amount for r in records), start=Decimal("0.00")),
         total_actual_payout=total_actual,

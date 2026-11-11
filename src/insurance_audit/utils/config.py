@@ -62,6 +62,18 @@ class InsuranceConfig:
     max_claim_amount: Decimal = field(
         default_factory=lambda: Decimal(os.getenv("INSURANCE_MAX_CLAIM_AMOUNT", "99999999.99"))
     )
+    tolerance_absolute: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_TOLERANCE_ABSOLUTE", "0.01"))
+    )
+    tolerance_ratio: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_TOLERANCE_RATIO", "0.001"))
+    )
+    minor_threshold: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_MINOR_THRESHOLD", "1.00"))
+    )
+    material_threshold: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("INSURANCE_MATERIAL_THRESHOLD", "100.00"))
+    )
 
     def __post_init__(self) -> None:
         """验证配置合法性"""
@@ -79,6 +91,17 @@ class InsuranceConfig:
             raise ConfigurationError(
                 "最大报案金额必须大于最小报案金额",
                 "INSURANCE_MAX_CLAIM_AMOUNT",
+            )
+        if self.tolerance_absolute < 0:
+            raise ConfigurationError("绝对容差不能为负数", "INSURANCE_TOLERANCE_ABSOLUTE")
+        if not Decimal("0") <= self.tolerance_ratio <= Decimal("1"):
+            raise ConfigurationError("相对容差比例必须在0~1之间", "INSURANCE_TOLERANCE_RATIO")
+        if self.minor_threshold <= 0:
+            raise ConfigurationError("轻微差异阈值必须大于0", "INSURANCE_MINOR_THRESHOLD")
+        if self.material_threshold <= self.minor_threshold:
+            raise ConfigurationError(
+                "重大差异阈值必须大于轻微差异阈值",
+                "INSURANCE_MATERIAL_THRESHOLD",
             )
 
 

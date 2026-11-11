@@ -41,6 +41,7 @@ class TestReconcileDataFrame:
             "系统核算金额",
             "差异金额",
             "审计状态",
+            "差异级别",
         }
         assert expected_columns.issubset(set(result_df.columns))
 
@@ -120,3 +121,75 @@ class TestReconcileDataFrame:
         parse_rows = result_df[result_df["审计状态"] == "解析失败"]
         assert len(parse_rows) == 1
         assert parse_rows.iloc[0]["保单号"] == "ABC123"
+        assert parse_rows.iloc[0]["差异级别"] == "—"
+
+
+def _single_row(
+    claim_amount: float,
+    actual_payout: float,
+    deductible: float = 0.0,
+) -> pd.DataFrame:
+    """构造单行数据，方便验证容差与级别边界。"""
+    return pd.DataFrame(
+        {
+            "保单号": ["CL9900100"],
+            "客户姓名": ["张三"],
+            "报案金额": [claim_amount],
+            "免赔额": [deductible],
+            "赔付比例": [0.80],
+            "实际赔付金额": [actual_payout],
+        }
+    )
+
+
+class TestDifferenceLevels:
+    """相对容差与差异分级"""
+
+    @pytest.mark.unit
+    def test_small_amount_uses_absolute_floor(self) -> None:
+        """小额保单：相对容差小于绝对下限，0.05 元的差异应被发现"""
+        df = _single_row(claim_amount=10.0, actual_payout=8.05)
+        result_df, summary = reconcile_dataframe(df)
+        assert summary.unmatched_records == 1
+        assert result_df.iloc[0]["差异级别"] == "轻微"
+
+    @pytest.mark.unit
+    def test_large_amount_tolerates_relative_noise(self) -> None:
+        """大额保单：0.1% 相对容差把 50 元噪声视为一致"""
+        df = _single_row(claim_amount=100000.0, actual_payout=80050.0)
+        result_df, summary = reconcile_dataframe(df)
+        assert summary.matched_records == 1
+        assert result_df.iloc[0]["审计状态"] == "一致"
+        assert result_df.iloc[0]["差异级别"] == "一致"
+
+    @pytest.mark.unit
+    def test_material_difference_is_classified(self) -> None:
+        """超过 100 元的差异归为重大，并计入摘要"""
+        df = _single_row(claim_amount=100000.0, actual_payout=80150.0)
+        result_df, summary = reconcile_dataframe(df)
+        assert summary.unmatched_records == 1
+        assert summary.material_records == 1
+        assert summary.minor_records == 0
+        assert result_df.iloc[0]["差异级别"] == "重大"
+
+    @pytest.mark.unit
+    def test_summary_counts_each_level(self) -> None:
+        """轻微/一般/重大三条差异各计一次"""
+        df = pd.DataFrame(
+            {
+                "保单号": ["CL9900100", "CL9900101", "CL9900102"],
+                "客户姓名": ["张三", "李四", "王五"],
+                "报案金额": [100.0, 1000.0, 1000.0],
+                "免赔额": [0.0, 0.0, 0.0],
+                "赔付比例": [0.80, 0.80, 0.80],
+                # 差异：0.5（轻微）、5（一般）、500（重大）
+                "实际赔付金额": [80.5, 805.0, 1300.0],
+            }
+        )
+        _, summary = reconcile_dataframe(df)
+        assert summary.unmatched_records == 3
+        assert (summary.minor_records, summary.normal_records, summary.material_records) == (
+            1,
+            1,
+            1,
+        )

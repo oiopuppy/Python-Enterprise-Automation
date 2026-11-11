@@ -30,6 +30,7 @@
 4. **给退出码**：全部一致 `0`，有差异或解析失败 `1`，系统异常 `2`——可以直接当流水线闸门用。
 5. **可选 JSON**：加 `--json` 把机器可读摘要打到 stdout（日志走 stderr，可直接管道），`--json-out summary.json` 同时落盘。
 6. **审计留痕**：加 `--manifest manifest.json` 输出输入文件 SHA256、字节数、工具版本与关键配置；同一输入两次运行，清单除时间外完全一致。
+7. **差异分级与可调闸门**：差异分「轻微 / 一般 / 重大」并在报告里着色；`--fail-on=any|material|parse-error|none` 决定多大的差异才阻断流水线。
 
 ## 安装
 
@@ -65,6 +66,9 @@ insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --json-ou
 # 同时输出审计清单（输入哈希/版本/配置，便于归档）
 insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --manifest reports/2026-11.manifest.json
 
+# 只有「重大差异」才阻断（1 分钱噪声不卡流水线）
+insurance-audit --input data/claims.xlsx --output reports/2026-11.xlsx --fail-on material
+
 # 不带参数：读 .env 里的 DATA_INPUT_FILE，写 reports/DATA_OUTPUT_FILE
 insurance-audit
 
@@ -85,12 +89,21 @@ print(summary.match_rate, summary.unmatched_records, summary.parse_error_records
 
 | 退出码 | 含义 |
 | --- | --- |
-| `0` | 审计完成，全部一致 |
-| `1` | 审计完成，但存在对账异常 / 解析失败 / 输入文件缺失 |
+| `0` | 审计完成，未触发闸门 |
+| `1` | 触发闸门（默认：有对账异常 / 解析失败）/ 输入文件缺失 |
 | `2` | 系统异常（IO、配置等） |
 | `3` | 安全异常 |
 | `9` | 其他业务异常 |
 | `99` | 未预期异常 |
+
+闸门用 `--fail-on` 调：
+
+| 取值 | 何时退出 `1` |
+| --- | --- |
+| `any`（默认） | 有任何差异或解析失败 |
+| `material` | 只有重大差异（默认 ≥100 元） |
+| `parse-error` | 只有解析失败 |
+| `none` | 不因审计结果失败 |
 
 ### 模拟数据
 
@@ -120,6 +133,10 @@ print(summary.match_rate, summary.unmatched_records, summary.parse_error_records
 | `INSURANCE_POLICY_PREFIX` | `CL` | 保单号前缀 |
 | `INSURANCE_MIN_CLAIM_AMOUNT` | `0.01` | 最小报案金额 |
 | `INSURANCE_MAX_CLAIM_AMOUNT` | `99999999.99` | 最大报案金额 |
+| `INSURANCE_TOLERANCE_ABSOLUTE` | `0.01` | 绝对容差（元） |
+| `INSURANCE_TOLERANCE_RATIO` | `0.001` | 相对容差（报案金额的 0.1%） |
+| `INSURANCE_MINOR_THRESHOLD` | `1.00` | 轻微差异上限（元） |
+| `INSURANCE_MATERIAL_THRESHOLD` | `100.00` | 重大差异下限（元） |
 
 日志文件不可写时不会崩：自动降级为仅控制台输出，并打一条 warning。
 

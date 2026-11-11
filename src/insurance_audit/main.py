@@ -27,6 +27,7 @@ from insurance_audit.audit.manifest import write_manifest
 from insurance_audit.audit.reporter import build_json_payload, write_json_report
 from insurance_audit.core.engine import AuditEngine
 from insurance_audit.data.generator import generate_mock_data
+from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import (
     DataException,
@@ -98,12 +99,35 @@ def _write_json_stdout(payload: dict[str, Any]) -> None:
     buffer.flush()
 
 
+FAIL_ON_CHOICES = ("any", "material", "parse-error", "none")
+
+
+def resolve_exit_code(summary: AuditSummary, fail_on: str = "any") -> int:
+    """按闸门策略把对账结果映射成业务退出码。
+
+    - ``any``：有任何异常或解析失败即退出 1（v2.0.0 的默认行为）；
+    - ``material``：只有重大差异才退出 1；
+    - ``parse-error``：只有解析失败才退出 1；
+    - ``none``：审计结果不影响退出码。
+    """
+    if fail_on == "none":
+        return EXIT_OK
+    if fail_on == "parse-error":
+        blocked = summary.parse_error_records > 0
+    elif fail_on == "material":
+        blocked = summary.material_records > 0
+    else:
+        blocked = summary.unmatched_records > 0 or summary.parse_error_records > 0
+    return EXIT_AUDIT_ISSUE if blocked else EXIT_OK
+
+
 def run_audit(
     input_path: Path,
     output_path: Path,
     emit_json: bool = False,
     json_out: Optional[Path] = None,
     manifest_out: Optional[Path] = None,
+    fail_on: str = "any",
 ) -> int:
     """
     执行完整的审计工作流
@@ -117,9 +141,10 @@ def run_audit(
         emit_json: 是否把 JSON 摘要打印到 stdout（日志走 stderr，stdout 保持纯 JSON）
         json_out: 可选的 JSON 摘要落盘路径
         manifest_out: 可选的审计清单落盘路径（输入哈希/版本/配置）
+        fail_on: 闸门策略（any/material/parse-error/none）
 
     Returns:
-        0 = 全部对账一致；1 = 存在对账异常或解析失败
+        0 = 未触发闸门；1 = 触发闸门（具体取决于 fail_on）
     """
     audit = get_audit_logger()
     audit.safe_log("AUDIT_START", "开始执行理赔数据审计流程")
@@ -172,11 +197,12 @@ def run_audit(
 
     if summary.unmatched_records > 0:
         logger.warning(f"[WARN] 发现 {summary.unmatched_records} 条对账异常，建议人工复核")
+        if summary.material_records > 0:
+            logger.warning(f"[WARN] 其中 {summary.material_records} 条为重大差异")
     if summary.parse_error_records > 0:
         logger.warning(f"[WARN] 有 {summary.parse_error_records} 条记录无法解析，未计入一致率")
 
-    has_issue = summary.unmatched_records > 0 or summary.parse_error_records > 0
-    return EXIT_OK if not has_issue else EXIT_AUDIT_ISSUE
+    return resolve_exit_code(summary, fail_on)
 
 
 # =============================================================================
@@ -228,6 +254,13 @@ def main() -> None:
         default=None,
         help="额外输出一份 JSON 审计清单（输入 SHA256、工具版本与关键配置）",
     )
+    parser.add_argument(
+        "--fail-on",
+        choices=FAIL_ON_CHOICES,
+        default="any",
+        help="闸门策略：any=有任何差异/解析失败即失败（默认），"
+        "material=只有重大差异才失败，parse-error=只有解析失败才失败，none=不影响退出码",
+    )
     args = parser.parse_args()
 
     # 日志配置必须在任何文件写入之前完成（库模块 import 时不建日志文件）
@@ -254,7 +287,14 @@ def main() -> None:
             logger.info("   insurance-audit --generate-mock")
             exit_code = EXIT_AUDIT_ISSUE
         else:
-            exit_code = run_audit(input_path, output_path, args.json, json_out, manifest_out)
+            exit_code = run_audit(
+                input_path,
+                output_path,
+                args.json,
+                json_out,
+                manifest_out,
+                args.fail_on,
+            )
 
     except DataException as e:
         logger.error(f"[ERR] 数据异常: {e}")

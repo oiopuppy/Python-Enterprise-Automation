@@ -15,6 +15,40 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from insurance_audit.utils.config import settings
 
+# 差异级别：审计状态仍只有「一致 / 异常」，级别用于说明异常有多严重
+DIFF_LEVEL_MATCH = "一致"
+DIFF_LEVEL_MINOR = "轻微"
+DIFF_LEVEL_NORMAL = "一般"
+DIFF_LEVEL_MATERIAL = "重大"
+
+# 容差默认值：绝对金额与相对比例取较大者，避免大额保单被 1 分钱卡住
+DEFAULT_TOLERANCE_ABSOLUTE = Decimal("0.01")
+DEFAULT_TOLERANCE_RATIO = Decimal("0.001")
+
+
+def tolerance_for(claim_amount: Decimal, absolute: Optional[Decimal] = None) -> Decimal:
+    """单条记录的容差：``max(绝对容差, 报案金额 × 相对容差)``。"""
+    abs_tol = settings.insurance.tolerance_absolute if absolute is None else absolute
+    relative = claim_amount * settings.insurance.tolerance_ratio
+    return max(abs_tol, relative)
+
+
+def classify_difference(diff: Decimal, tolerance: Decimal) -> str:
+    """把差异金额归到四个级别之一。
+
+    - ``一致``：差异小于容差（与 v2.0.0 的 ``diff < tolerance`` 保持一致）；
+    - ``轻微``：超过容差但不超过轻微阈值（默认 1 元）；
+    - ``一般``：超过轻微阈值但小于重大阈值；
+    - ``重大``：达到或超过重大阈值（默认 100 元）。
+    """
+    if diff < tolerance:
+        return DIFF_LEVEL_MATCH
+    if diff >= settings.insurance.material_threshold:
+        return DIFF_LEVEL_MATERIAL
+    if diff > settings.insurance.minor_threshold:
+        return DIFF_LEVEL_NORMAL
+    return DIFF_LEVEL_MINOR
+
 
 class ClaimRecord(BaseModel):
     """单条理赔记录模型"""
@@ -65,6 +99,10 @@ class ClaimRecord(BaseModel):
         default=None,
         description="审计状态：一致/异常",
     )
+    diff_level: Optional[str] = Field(
+        default=None,
+        description="差异级别：一致/轻微/一般/重大",
+    )
 
     @field_validator("claim_amount", "deductible", mode="before")
     @classmethod
@@ -111,19 +149,24 @@ class ClaimRecord(BaseModel):
             policy_id=self.policy_id,
         )
 
-    def reconcile(self) -> tuple[bool, Decimal]:
+    def reconcile(self, tolerance: Optional[Decimal] = None) -> tuple[bool, Decimal]:
         """
         对账比较：系统核算 vs 原始赔付
+
+        Args:
+            tolerance: 可选的自定义容差；默认按
+                ``max(绝对容差, 报案金额 × 相对容差)`` 计算
 
         Returns:
             (是否一致, 差异金额)
         """
         calculated = self.calculate_payout()
         diff = abs(calculated - self.actual_payout)
-        tolerance = Decimal(10) ** -settings.insurance.decimal_places
-        is_match = diff < tolerance
+        effective_tolerance = tolerance_for(self.claim_amount, tolerance)
+        is_match = diff < effective_tolerance
         self.calculated_payout = calculated
         self.audit_status = "一致" if is_match else "异常"
+        self.diff_level = classify_difference(diff, effective_tolerance)
         return is_match, diff
 
     model_config = ConfigDict(populate_by_name=True)
@@ -141,6 +184,9 @@ class AuditSummary(BaseModel):
     )
     matched_records: int = 0
     unmatched_records: int = 0
+    minor_records: int = Field(default=0, description="轻微差异记录数")
+    normal_records: int = Field(default=0, description="一般差异记录数")
+    material_records: int = Field(default=0, description="重大差异记录数")
     match_rate: float = Field(default=0.0, ge=0.0, le=100.0)
     total_claim_amount: Decimal = Decimal("0.00")
     total_actual_payout: Decimal = Decimal("0.00")
