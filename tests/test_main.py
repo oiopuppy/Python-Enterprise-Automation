@@ -453,3 +453,32 @@ class TestFailOnPolicy:
         summary = pd.read_excel(report_file, sheet_name="审计摘要")
         for label in ("轻微差异", "一般差异", "重大差异"):
             assert label in set(summary["审计项目"])
+
+    @pytest.mark.integration
+    def test_report_layout_is_printer_friendly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """四个 sheet 都冻结首行、带筛选与打印标题，差异列有两条条件格式"""
+        from openpyxl import load_workbook
+
+        input_file = tmp_path / "input.xlsx"
+        generate_mock_data(num_records=10, output_file=str(input_file), anomaly_ratio=0.5, seed=5)
+        report_file = tmp_path / "report.xlsx"
+
+        _run_main(monkeypatch, "--input", str(input_file), "--output", str(report_file))
+
+        wb = load_workbook(report_file)
+        assert set(wb.sheetnames) >= {"审计摘要", "对账明细", "异常数据", "数据质量问题"}
+        for name in ("审计摘要", "对账明细", "异常数据", "数据质量问题"):
+            ws = wb[name]
+            assert ws.freeze_panes == "A2"
+            if ws.max_row > 1:
+                assert ws.auto_filter.ref is not None
+            assert ws.print_title_rows == "$1:$1"
+            assert ws.page_setup.orientation == "landscape"
+
+        detail = wb["对账明细"]
+        cf_rules = [rule for cf in detail.conditional_formatting for rule in cf.rules]
+        assert len(cf_rules) >= 2
+        formulas = " ".join(str(rule.formula) for rule in cf_rules)
+        assert "ABS(" in formulas

@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import pandas as pd
-from openpyxl.styles import Font, PatternFill
+from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from insurance_audit import __version__
 from insurance_audit.audit.manifest import file_fingerprint
@@ -26,6 +27,7 @@ from insurance_audit.core.validator import (
 )
 from insurance_audit.data.writer import auto_adjust_column_width
 from insurance_audit.models.claim import AuditSummary
+from insurance_audit.utils.config import settings
 from insurance_audit.utils.exceptions import IOFailure
 from insurance_audit.utils.logger import get_logger
 
@@ -145,7 +147,6 @@ def _apply_detail_formats(ws: Any, df: pd.DataFrame) -> None:
     if "差异级别" not in columns:
         return
     level_idx = columns.index("差异级别") + 1
-    amount_idx = columns.index("差异金额") + 1 if "差异金额" in columns else None
     for offset, level in enumerate(df["差异级别"].tolist()):
         fill = DIFF_LEVEL_FILLS.get(str(level))
         if fill is None:
@@ -155,8 +156,55 @@ def _apply_detail_formats(ws: Any, df: pd.DataFrame) -> None:
         ws.cell(row=row, column=level_idx).fill = fill
         if font is not None:
             ws.cell(row=row, column=level_idx).font = font
-        if amount_idx is not None:
-            ws.cell(row=row, column=amount_idx).fill = fill
+
+
+def _apply_sheet_readability(ws: Any, df: pd.DataFrame) -> None:
+    """冻结表头、开启筛选、设置打印版式，长明细翻页时表头不丢"""
+    ws.freeze_panes = "A2"
+    if len(df) > 0:
+        ws.auto_filter.ref = ws.dimensions
+    ws.print_title_rows = "1:1"
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    columns = list(df.columns)
+    center = Alignment(horizontal="center", vertical="center")
+    for col in ("审计状态", "差异级别"):
+        if col in columns:
+            idx = columns.index(col) + 1
+            for row in range(2, len(df) + 2):
+                ws.cell(row=row, column=idx).alignment = center
+
+
+def _apply_difference_rules(ws: Any, df: pd.DataFrame) -> None:
+    """给「差异金额」加条件格式：超重大阈值标红，超轻微阈值标黄"""
+    if "差异金额" not in df.columns or len(df) == 0:
+        return
+    idx = list(df.columns).index("差异金额") + 1
+    letter = ws.cell(row=1, column=idx).column_letter
+    last_row = len(df) + 1
+    rng = f"{letter}2:{letter}{last_row}"
+    material = settings.insurance.material_threshold
+    minor = settings.insurance.minor_threshold
+
+    ws.conditional_formatting.add(
+        rng,
+        FormulaRule(
+            formula=[f"ABS({letter}2)>{material}"],
+            fill=DIFF_LEVEL_FILLS["重大"],
+            font=DIFF_LEVEL_FONTS["重大"],
+            stopIfTrue=True,
+        ),
+    )
+    ws.conditional_formatting.add(
+        rng,
+        FormulaRule(
+            formula=[f"AND(ABS({letter}2)>{minor},ABS({letter}2)<={material})"],
+            fill=DIFF_LEVEL_FILLS["轻微"],
+            stopIfTrue=True,
+        ),
+    )
 
 
 def build_json_payload(
@@ -298,6 +346,18 @@ def generate_report(
         _apply_detail_formats(writer.sheets["对账明细"], detail_df)
         if not anomaly_df.empty:
             _apply_detail_formats(writer.sheets["异常数据"], anomaly_df)
+
+        # 所有 sheet 冻结首行 + 自动筛选 + 横向打印；差异金额按阈值条件标色
+        for sheet_name, frame in (
+            ("审计摘要", summary_df),
+            ("对账明细", detail_sheet_df),
+            ("异常数据", anomaly_df),
+            ("数据质量问题", quality_df),
+        ):
+            ws = writer.sheets[sheet_name]
+            _apply_sheet_readability(ws, frame)
+            if sheet_name in ("对账明细", "异常数据"):
+                _apply_difference_rules(ws, frame)
 
         # 摘要 Sheet：金额与百分比用 Excel 数字格式，保持可计算
         summary_ws = writer.sheets["审计摘要"]
