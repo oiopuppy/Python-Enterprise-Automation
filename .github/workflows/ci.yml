@@ -52,7 +52,8 @@ jobs:
   test:
     name: 🧪 测试 (Python ${{ matrix.python-version }})
     needs: lint
-    runs-on: ubuntu-latest
+    # 3.9 在 ubuntu-latest（26.04）已没有预编译包，固定到 22.04 保证双版本矩阵可跑
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         python-version: ['3.9', '3.12']
