@@ -12,7 +12,12 @@ from typing import Any, Optional
 from insurance_audit.audit.manifest import build_manifest
 from insurance_audit.audit.reconciler import reconcile_dataframe
 from insurance_audit.audit.reporter import generate_report
-from insurance_audit.core.validator import CODE_DUPLICATE_POLICY, FieldIssue, validate_dataframe
+from insurance_audit.core.validator import (
+    CODE_DUPLICATE_POLICY,
+    FieldIssue,
+    normalize_columns,
+    validate_dataframe,
+)
 from insurance_audit.data.reader import read_excel
 from insurance_audit.models.claim import AuditSummary
 from insurance_audit.utils.config import settings
@@ -53,8 +58,8 @@ class AuditEngine:
         logger.info("审计引擎启动 — 执行完整工作流")
         started = time.perf_counter()
 
-        # 1. 读取数据
-        df = read_excel(self.input_file)
+        # 1. 读取数据（先把别名表头归一成标准列名）
+        df = normalize_columns(read_excel(self.input_file))
         manifest = build_manifest(self.input_file, rows=len(df), output_path=self.output_file)
         self.manifest = manifest
 

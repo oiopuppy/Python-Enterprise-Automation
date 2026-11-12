@@ -41,6 +41,16 @@ REQUIRED_COLUMNS: dict[str, str] = {
 # 金额列（需要 Decimal 精度处理）
 MONEY_COLUMNS = {"报案金额", "免赔额", "实际赔付金额"}
 
+# 表头别名：真实台账的常见写法 → 标准列名
+COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "保单号": ("保单编号", "保单ID", "保单编码", "投保单号", "policy_id"),
+    "客户姓名": ("客户名称", "被保险人", "投保人", "客户"),
+    "报案金额": ("报案额", "索赔金额", "赔款金额", "出险金额"),
+    "免赔额": ("免赔", "免赔金额", "扣除额"),
+    "赔付比例": ("赔付率", "给付比例", "赔偿比例"),
+    "实际赔付金额": ("实际赔付", "实赔金额", "已赔付金额", "实际赔偿金额"),
+}
+
 # 数值范围约束
 COLUMN_CONSTRAINTS: dict[str, dict[str, Any]] = {
     "报案金额": {
@@ -64,16 +74,63 @@ class FieldIssue:
     value: str = ""
 
 
+def _clean_header(value: Any) -> str:
+    """去掉 BOM、全角空格并 strip，用于表头匹配"""
+    return str(value).replace("\ufeff", "").replace("\u3000", " ").strip()
+
+
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """把别名表头统一成标准列名；标准列优先，同一个标准列只认一列"""
+    rename: dict[Any, str] = {}
+    used: set[str] = set()
+
+    # 第一轮：标准列（可能带 BOM / 空格）优先占位，避免别名先占走列名后出现重名
+    for col in df.columns:
+        cleaned = _clean_header(col)
+        if cleaned in REQUIRED_COLUMNS and cleaned not in used:
+            rename[col] = cleaned
+            used.add(cleaned)
+
+    # 第二轮：别名只映射到还没被占用的标准列；冲突时保留先出现的一列并告警
+    for col in df.columns:
+        if col in rename:
+            continue
+        cleaned = _clean_header(col)
+        if cleaned in REQUIRED_COLUMNS:
+            logger.warning(f"表头重复：{col!r} 与已识别的标准列重名，忽略这一列")
+            continue
+        for canonical, aliases in COLUMN_ALIASES.items():
+            if cleaned not in aliases:
+                continue
+            if canonical in used:
+                logger.warning(
+                    f"表头冲突：{col!r} 也可映射为「{canonical}」，但该标准列已存在，忽略这一列"
+                )
+            else:
+                rename[col] = canonical
+                used.add(canonical)
+            break
+
+    if not rename:
+        return df
+    logger.info(f"表头已归一：{rename}")
+    return df.rename(columns=rename)
+
+
 def validate_columns(df: pd.DataFrame) -> None:
     """
     校验Excel文件是否包含所有必需的列
 
     Raises:
-        InvalidColumnError: 缺少必需列
+        InvalidColumnError: 缺少必需列（消息里同时给出已识别列与期望列名）
     """
     missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
     if missing:
-        raise InvalidColumnError(missing)
+        raise InvalidColumnError(
+            missing,
+            identified_columns=[str(col) for col in df.columns],
+            expected_columns=list(REQUIRED_COLUMNS),
+        )
     logger.debug(f"列校验通过，共 {len(df.columns)} 列")
 
 

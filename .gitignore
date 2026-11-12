@@ -211,3 +211,5 @@ __marimo__/
 *.xls
 *.csv
 final_settlement_report.xlsx
+# 白名单：标准台账模板是交付物，需要进库
+!data/templates/*.xlsx
