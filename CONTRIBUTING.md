@@ -43,8 +43,9 @@ ci: 增加 concurrency 避免重复跑流水线
 1. push 分支，开 PR，**base 选 `develop`**，先转 Draft；
 2. 按 `.github/pull_request_template.md` 填动机、改动、验证、风险、不在本 PR 的范围；
 3. 等 CI 全绿，自己按模板逐项自查；
-4. 留审查评论，写下 GO 记录（`GO / HEAD=<完整 SHA> / CI=GREEN / REVIEW=... / DOD=PASS`），再合并；
-5. 合并后删分支，`develop` 保持随时可发布。
+4. 留一条自查记录（`GO / HEAD=<完整 SHA> / CI=GREEN / REVIEW=自查 / DOD=PASS`）——这只是留痕，不等于批准；
+5. **停下来等所有者审查确认**，所有者在 PR 下明确说「可以合」之后才合并；
+6. 合并后删分支，`develop` 保持随时可发布。
 
 `main` 只在发版时从 `develop` 合并，平时不动。
 
