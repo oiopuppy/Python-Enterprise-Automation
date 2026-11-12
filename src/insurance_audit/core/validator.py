@@ -80,17 +80,37 @@ def _clean_header(value: Any) -> str:
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """把别名表头统一成标准列名；标准列已存在时不动"""
+    """把别名表头统一成标准列名；标准列优先，同一个标准列只认一列"""
     rename: dict[Any, str] = {}
+    used: set[str] = set()
+
+    # 第一轮：标准列（可能带 BOM / 空格）优先占位，避免别名先占走列名后出现重名
     for col in df.columns:
         cleaned = _clean_header(col)
-        if cleaned in REQUIRED_COLUMNS:
+        if cleaned in REQUIRED_COLUMNS and cleaned not in used:
             rename[col] = cleaned
+            used.add(cleaned)
+
+    # 第二轮：别名只映射到还没被占用的标准列；冲突时保留先出现的一列并告警
+    for col in df.columns:
+        if col in rename:
+            continue
+        cleaned = _clean_header(col)
+        if cleaned in REQUIRED_COLUMNS:
+            logger.warning(f"表头重复：{col!r} 与已识别的标准列重名，忽略这一列")
             continue
         for canonical, aliases in COLUMN_ALIASES.items():
-            if cleaned in aliases and canonical not in df.columns:
+            if cleaned not in aliases:
+                continue
+            if canonical in used:
+                logger.warning(
+                    f"表头冲突：{col!r} 也可映射为「{canonical}」，但该标准列已存在，忽略这一列"
+                )
+            else:
                 rename[col] = canonical
-                break
+                used.add(canonical)
+            break
+
     if not rename:
         return df
     logger.info(f"表头已归一：{rename}")
