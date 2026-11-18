@@ -65,6 +65,24 @@ def test_manifest_contains_version_and_config_without_secrets(tmp_path: Path) ->
 
 
 @pytest.mark.unit
+def test_manifest_records_profile_tolerances(tmp_path: Path) -> None:
+    """清单要能证明「这次审计用的是 profile 的容差还是全局容差」"""
+    from decimal import Decimal
+
+    from insurance_audit.utils.config import MappingProfile
+
+    input_file = _make_input(tmp_path)
+    profile = MappingProfile(tolerance_absolute=Decimal("99"), tolerance_ratio=Decimal("0.9"))
+    manifest = build_manifest(input_file, rows=5, profile=profile)
+
+    assert manifest["profile"]["tolerance_absolute"] == "99"
+    assert manifest["profile"]["tolerance_ratio"] == "0.9"
+    assert manifest["profile"]["role"] == "ledger"
+    # 全局配置也留一份，方便对照
+    assert "tolerance_absolute" in manifest["config"]
+
+
+@pytest.mark.unit
 def test_cli_writes_manifest(tmp_path: Path) -> None:
     """--manifest 落盘，含行数、SHA256 与输出路径"""
     input_file = _make_input(tmp_path)

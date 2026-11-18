@@ -26,10 +26,18 @@ DEFAULT_TOLERANCE_ABSOLUTE = Decimal("0.01")
 DEFAULT_TOLERANCE_RATIO = Decimal("0.001")
 
 
-def tolerance_for(claim_amount: Decimal, absolute: Optional[Decimal] = None) -> Decimal:
-    """单条记录的容差：``max(绝对容差, 报案金额 × 相对容差)``。"""
+def tolerance_for(
+    claim_amount: Decimal,
+    absolute: Optional[Decimal] = None,
+    ratio: Optional[Decimal] = None,
+) -> Decimal:
+    """单条记录的容差：``max(绝对容差, 报案金额 × 相对容差)``。
+
+    两个参数都可不传，缺省取全局配置；profile 里声明了容差时由对账层传进来。
+    """
     abs_tol = settings.insurance.tolerance_absolute if absolute is None else absolute
-    relative = claim_amount * settings.insurance.tolerance_ratio
+    ratio_value = settings.insurance.tolerance_ratio if ratio is None else ratio
+    relative = claim_amount * ratio_value
     return max(abs_tol, relative)
 
 
@@ -104,6 +112,33 @@ class ClaimRecord(BaseModel):
         description="差异级别：一致/轻微/一般/重大",
     )
 
+    # ------------------------------------------------------------------
+    # 数据模型 v2 的可选字段
+    #
+    # 老台账没有这些列也能跑（全部 Optional），新台账填了就能用于稽核、
+    # 时效合规与多源对账；字段名与 profile 的 STANDARD_FIELDS 一致。
+    # ------------------------------------------------------------------
+    case_no: Optional[str] = Field(default=None, alias="赔案号", description="赔案号")
+    insured_name: Optional[str] = Field(
+        default=None, alias="被保险人", max_length=50, description="被保险人姓名"
+    )
+    policy_limit: Optional[Decimal] = Field(
+        default=None, alias="保额", ge=Decimal("0"), description="保单保额（元）"
+    )
+    status: Optional[str] = Field(
+        default=None, alias="案件状态", max_length=20, description="案件状态（结案/拒赔等）"
+    )
+    bank_account_hash: Optional[str] = Field(
+        default=None,
+        alias="收款账号哈希",
+        max_length=64,
+        description="收款账号哈希（脱敏后，不含明文账号）",
+    )
+    report_date: Optional[str] = Field(default=None, alias="报案日期", description="报案日期")
+    accept_date: Optional[str] = Field(default=None, alias="受理日期", description="受理日期")
+    verify_date: Optional[str] = Field(default=None, alias="核定日期", description="核定日期")
+    pay_date: Optional[str] = Field(default=None, alias="支付日期", description="支付日期")
+
     @field_validator("claim_amount", "deductible", mode="before")
     @classmethod
     def validate_amount_precision(cls, value: object) -> object:
@@ -149,20 +184,26 @@ class ClaimRecord(BaseModel):
             policy_id=self.policy_id,
         )
 
-    def reconcile(self, tolerance: Optional[Decimal] = None) -> tuple[bool, Decimal]:
+    def reconcile(
+        self,
+        tolerance: Optional[Decimal] = None,
+        ratio: Optional[Decimal] = None,
+    ) -> tuple[bool, Decimal]:
         """
         对账比较：系统核算 vs 原始赔付
 
         Args:
-            tolerance: 可选的自定义容差；默认按
-                ``max(绝对容差, 报案金额 × 相对容差)`` 计算
+            tolerance: 可选的自定义绝对容差；默认取全局配置
+            ratio: 可选的自定义相对容差（0~1）；默认取全局配置。
+                profile 里声明了容差时由对账层把两者一起传进来，
+                实际容差仍是 ``max(绝对容差, 报案金额 × 相对容差)``。
 
         Returns:
             (是否一致, 差异金额)
         """
         calculated = self.calculate_payout()
         diff = abs(calculated - self.actual_payout)
-        effective_tolerance = tolerance_for(self.claim_amount, tolerance)
+        effective_tolerance = tolerance_for(self.claim_amount, tolerance, ratio)
         is_match = diff < effective_tolerance
         self.calculated_payout = calculated
         self.audit_status = "一致" if is_match else "异常"
