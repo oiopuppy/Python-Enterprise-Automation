@@ -29,6 +29,11 @@
 - `--fail-on=any|material|parse-error|none`：闸门策略，默认 `any` 与 v2.0.0 行为一致。
 - 表头别名映射：`保单编号`/`赔款金额`/`给付比例` 等常见写法归一成标准列名，自动清理 BOM、全角空格与首尾空格；缺列报错同时给出已识别列与期望列名。
 - 标准台账模板 `data/templates/标准台账模板.xlsx`，表头与 `REQUIRED_COLUMNS` 一致并有测试守护。
+- 读取层支持 `.csv` / `.tsv` / `.txt`，自动探测 UTF-8 / UTF-8 BOM / GB18030 编码与分隔符；Excel 支持按名字或序号指定 sheet，sheet 不存在时报错并列出可用 sheet。
+- 映射 profile（`DATA_PROFILE` 指向的 JSON）：声明「标准字段 → 源列名」、主键、时间轴、日期格式、金额单位（元/万元）、sheet、编码与跳过行数，客户原始表不改列名即可跑；profile 引用的源列不存在时报错写明列名、表头行号与文件实际列名。
+- 标准模型 v2 扩展 9 个可选字段：`赔案号`、`被保险人`、`保额`、`案件状态`、`收款账号哈希`、`报案日期`、`受理日期`、`核定日期`、`支付日期`。
+- 读取层 CLI：`python -m insurance_audit.data.reader`，支持 `--print-template`（6 列 / `--full` 15 列 / `--format csv` / 按 profile 出客户列名）、`--init-profile`（按实际表头猜 profile 草稿）、`--inspect`（看编码、分隔符、列名、行数）。
+- `tests/test_reader_formats.py`：34 个用例覆盖 CSV、多 sheet、profile、模板与 CLI。
 
 ### 变更
 
@@ -43,7 +48,7 @@
 
 ### 测试
 
-- 用例总数 58 → 63 → 65 → 68 → 77 → 83 → 89 → 105 → 106 → 110；覆盖率 91%。
+- 用例总数 58 → 63 → 65 → 68 → 77 → 83 → 89 → 105 → 106 → 110 → 136 → 147；覆盖率 90%。
 
 ## [2.0.0] - 2026-11-10
 

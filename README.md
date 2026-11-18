@@ -12,7 +12,7 @@
 
 ## 它能做什么
 
-给定一份包含 6 列的 Excel（也认 `保单编号`、`赔款金额`、`给付比例` 等常见别名；模板见 `data/templates/标准台账模板.xlsx`）：
+给定一份包含 6 列的 Excel 或 CSV（也认 `保单编号`、`赔款金额`、`给付比例` 等常见别名；模板见 `data/templates/标准台账模板.xlsx`）：
 
 | 保单号 | 客户姓名 | 报案金额 | 免赔额 | 赔付比例 | 实际赔付金额 |
 | --- | --- | --- | --- | --- | --- |
@@ -32,6 +32,42 @@
 6. **审计留痕**：加 `--manifest manifest.json` 输出输入文件 SHA256、字节数、工具版本与关键配置；同一输入两次运行，清单除时间外完全一致。
 7. **差异分级与可调闸门**：差异分「轻微 / 一般 / 重大」并在报告里着色；`--fail-on=any|material|parse-error|none` 决定多大的差异才阻断流水线。
 8. **能直接上会/打印**：所有 sheet 冻结首行、带筛选；差异金额按阈值条件着色；横向打印且每页重复表头。
+9. **客户原始表不用改**：支持 `.csv` / `.tsv`（自动探测 UTF-8 / GBK）与多 sheet Excel；列名对不上时写一份映射 profile 指过去即可，还能按客户自己的列名生成模板。
+
+### 列名对不上？写个 profile 就行
+
+客户导出的表往往是英文列名、GBK 编码、表头前还有一行说明。这时不改源文件，写一份 `profiles/customer-a.json`：
+
+```json
+{
+  "encoding": "gb18030",
+  "skiprows": 1,
+  "columns": {
+    "保单号": "policy_no",
+    "客户姓名": "insured_name",
+    "报案金额": "claim_amount",
+    "免赔额": "deductible",
+    "赔付比例": "payout_ratio",
+    "实际赔付金额": "actual_payout"
+  }
+}
+```
+
+```bash
+# 看一眼文件到底是什么编码、什么列名
+python -m insurance_audit.data.reader --inspect 客户台账.csv --skiprows 1
+
+# 让工具按实际表头猜一份草稿（改两行就能用）
+python -m insurance_audit.data.reader --init-profile profiles/customer-a.json --from 客户台账.csv --skiprows 1
+
+# 按客户自己的列名生成模板
+python -m insurance_audit.data.reader --print-template --profile profiles/customer-a.json --out 客户模板.xlsx
+
+# 指过去跑审计（也可以写进 .env 的 DATA_PROFILE）
+DATA_PROFILE=profiles/customer-a.json insurance-audit --input 客户台账.csv --output reports/a.xlsx
+```
+
+`--print-template` 默认出 6 列标准模板，加 `--full` 出 15 列（含赔案号、时间轴等 v2 扩展字段），`--format csv` 出带 BOM 的 CSV。不配 profile 时行为与之前完全一致。
 
 ## 安装
 
@@ -128,6 +164,7 @@ print(summary.match_rate, summary.unmatched_records, summary.parse_error_records
 | `DATA_INPUT_FILE` | `sample_claim_data.xlsx` | 默认输入文件 |
 | `DATA_OUTPUT_FILE` | `final_settlement_report.xlsx` | 默认报告文件名 |
 | `DATA_OUTPUT_DIR` | `reports` | 默认报告目录 |
+| `DATA_PROFILE` | 空 | 映射 profile 的 JSON 路径（列名→标准字段），留空用内置 6 列表头 |
 | `INSURANCE_DEFAULT_DEDUCTIBLE` | `500` | 默认免赔额 |
 | `INSURANCE_DEFAULT_RATIO` | `0.80` | 默认赔付比例 |
 | `INSURANCE_DECIMAL_PLACES` | `2` | 金额精度 |

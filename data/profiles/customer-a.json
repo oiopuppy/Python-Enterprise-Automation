@@ -1,0 +1,19 @@
+﻿{
+  "role": "ledger",
+  "columns": {
+    "保单号": "policy_id",
+    "客户姓名": "insured_name",
+    "报案金额": "claim_amount",
+    "免赔额": "deductible",
+    "赔付比例": "payout_ratio",
+    "实际赔付金额": "actual_payout",
+    "赔案号": "case_no",
+    "报案日期": "report_date"
+  },
+  "primary_key": ["保单号"],
+  "timeline": ["报案日期"],
+  "date_formats": ["%Y/%m/%d"],
+  "amount_unit": "yuan",
+  "encoding": "gb18030",
+  "skiprows": 1
+}
