@@ -67,7 +67,7 @@ python -m insurance_audit.data.reader --print-template --profile profiles/custom
 DATA_PROFILE=profiles/customer-a.json insurance-audit --input 客户台账.csv --output reports/a.xlsx
 ```
 
-`--print-template` 默认出 6 列标准模板，加 `--full` 出 15 列（含赔案号、时间轴等 v2 扩展字段），`--format csv` 出带 BOM 的 CSV。不配 profile 时行为与之前完全一致。
+`--print-template` 默认出 6 列标准模板，加 `--full` 出 15 列（含赔案号、时间轴等 v2 扩展字段）；带 profile 时按 profile 的源列名出模板，并按 `skiprows` 补说明行、按 `encoding` 写文件，填完直接就能跑。不配 profile 时行为与之前完全一致。
 
 ## 安装
 

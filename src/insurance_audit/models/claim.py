@@ -184,20 +184,26 @@ class ClaimRecord(BaseModel):
             policy_id=self.policy_id,
         )
 
-    def reconcile(self, tolerance: Optional[Decimal] = None) -> tuple[bool, Decimal]:
+    def reconcile(
+        self,
+        tolerance: Optional[Decimal] = None,
+        ratio: Optional[Decimal] = None,
+    ) -> tuple[bool, Decimal]:
         """
         对账比较：系统核算 vs 原始赔付
 
         Args:
-            tolerance: 可选的自定义容差；默认按
-                ``max(绝对容差, 报案金额 × 相对容差)`` 计算
+            tolerance: 可选的自定义绝对容差；默认取全局配置
+            ratio: 可选的自定义相对容差（0~1）；默认取全局配置。
+                profile 里声明了容差时由对账层把两者一起传进来，
+                实际容差仍是 ``max(绝对容差, 报案金额 × 相对容差)``。
 
         Returns:
             (是否一致, 差异金额)
         """
         calculated = self.calculate_payout()
         diff = abs(calculated - self.actual_payout)
-        effective_tolerance = tolerance_for(self.claim_amount, tolerance)
+        effective_tolerance = tolerance_for(self.claim_amount, tolerance, ratio)
         is_match = diff < effective_tolerance
         self.calculated_payout = calculated
         self.audit_status = "一致" if is_match else "异常"

@@ -17,6 +17,7 @@
 """
 
 import argparse
+import codecs
 import csv
 import io
 import json
@@ -41,6 +42,9 @@ CSV_SUFFIXES = (".csv", ".tsv", ".txt")
 # CSV 编码候选：utf-8-sig 能吃掉 BOM，gb18030 是 GBK/GB2312 的超集
 ENCODING_CANDIDATES = ("utf-8-sig", "utf-8", "gb18030")
 
+# 探测编码时只读开头这么多字节：只用来判断编码，不当作文件内容
+ENCODING_SAMPLE_SIZE = 65536
+
 # 内置默认 profile 的 6 个核心字段（与 validator.REQUIRED_COLUMNS 同序）
 CORE_FIELDS = STANDARD_FIELDS[:6]
 
@@ -52,22 +56,21 @@ DATE_FIELDS = ("报案日期", "受理日期", "核定日期", "支付日期")
 WAN_FACTOR = Decimal("10000")
 
 
-def _decode_head(path: Path, size: int = 65536) -> tuple[str, str]:
-    """读取文件开头若干字节，判断编码
+def _probe_encoding(raw: bytes, path: Path) -> str:
+    """从一段字节判断编码（UTF-8 优先，其次 GB18030）
 
-    Returns:
-        (编码名, 文本片段)
-
-    Raises:
-        IOFailure: 所有候选编码都解不开
+    用增量解码器且 ``final=False``：样本末尾正好切断一个多字节字符时不算解码失败，
+    否则「64 KiB 处刚好切到半个汉字」会被误判成「整个文件编码未知」。
     """
-    raw = path.read_bytes()[:size]
     errors = []
     for encoding in ENCODING_CANDIDATES:
         try:
-            return encoding, raw.decode(encoding)
-        except UnicodeDecodeError as e:
-            errors.append(f"{encoding}: {e.reason}")
+            codecs.getincrementaldecoder(encoding)(errors="strict").decode(raw, final=False)
+        except (UnicodeDecodeError, LookupError) as e:
+            reason = getattr(e, "reason", None) or str(e)
+            errors.append(f"{encoding}: {reason}")
+            continue
+        return encoding
     raise IOFailure(
         operation="read_table",
         path=str(path.absolute()),
@@ -80,8 +83,44 @@ def _decode_head(path: Path, size: int = 65536) -> tuple[str, str]:
 
 def detect_encoding(path: Union[str, Path]) -> str:
     """探测文本文件的编码（UTF-8 优先，其次 GB18030）"""
-    encoding, _ = _decode_head(Path(path))
-    return encoding
+    file_path = Path(path)
+    return _probe_encoding(file_path.read_bytes()[:ENCODING_SAMPLE_SIZE], file_path)
+
+
+def _read_text(path: Path, encoding: Optional[str]) -> tuple[str, str]:
+    """把**整份**文本读出来，返回 (实际使用的编码, 全文)
+
+    编码探测只看开头 ``ENCODING_SAMPLE_SIZE`` 字节，但真正交给 pandas 的是整份文件：
+    只读开头会把大文件静默截断成「跑通了但少了一半数据」，比直接报错更危险。
+    探测成功的编码解不开整份文件时（例如前 64 KiB 是 UTF-8、后面夹了 GBK），
+    会退回其余候选编码再试，全部失败才报错并说明原因。
+    """
+    raw = path.read_bytes()
+    if encoding and encoding.lower() != "auto":
+        try:
+            return encoding, raw.decode(encoding)
+        except UnicodeDecodeError as e:
+            raise IOFailure(
+                operation="read_table",
+                path=str(path.absolute()),
+                original_error=f"用编码 {encoding} 读取失败: {e.reason}",
+            ) from e
+
+    detected = _probe_encoding(raw[:ENCODING_SAMPLE_SIZE], path)
+    candidates = [detected] + [name for name in ENCODING_CANDIDATES if name != detected]
+    for candidate in candidates:
+        try:
+            return candidate, raw.decode(candidate)
+        except UnicodeDecodeError:
+            continue
+    raise IOFailure(
+        operation="read_table",
+        path=str(path.absolute()),
+        original_error=(
+            f"探测到的编码 {detected!r} 无法解码整份文件，其余候选编码也失败；"
+            "请用 profile 的 encoding 字段指定实际编码"
+        ),
+    )
 
 
 def _sniff_delimiter(sample: str) -> str:
@@ -151,20 +190,17 @@ def _read_csv_frame(
     skiprows: int,
 ) -> tuple[pd.DataFrame, str]:
     """读 CSV，返回 (DataFrame, 实际使用的编码)"""
-    if encoding and encoding.lower() != "auto":
-        try:
-            text = path.read_bytes().decode(encoding)
-        except UnicodeDecodeError as e:
-            raise IOFailure(
-                operation="read_table",
-                path=str(path.absolute()),
-                original_error=f"用编码 {encoding} 读取失败: {e.reason}",
-            ) from e
-        resolved = encoding
-    else:
-        resolved, text = _decode_head(path)
+    resolved, text = _read_text(path, encoding)
 
     delimiter = _sniff_delimiter("\n".join(text.splitlines()[:20]))
+    # 只有表头、还没有填数据的模板：pandas 会抛 "No columns to parse from file"，
+    # 这里按表头造一张空表，让「先出模板、后填数」的流程能直接跑通
+    non_blank = [line for line in text.splitlines() if line.strip()]
+    if len(non_blank) <= skiprows + 1:
+        header_line = non_blank[skiprows] if len(non_blank) > skiprows else ""
+        columns = next(csv.reader([header_line], delimiter=delimiter), [])
+        logger.info(f"文件只有表头，没有数据行: {path.name}（{len(columns)} 列）")
+        return pd.DataFrame(columns=columns, dtype=object), resolved
     try:
         df = pd.read_csv(
             io.StringIO(text),
@@ -182,6 +218,42 @@ def _read_csv_frame(
     return df, resolved
 
 
+def _plan_rename(column_map: dict[str, str], columns: Sequence[Any]) -> dict[Any, str]:
+    """算出「源列名 -> 标准字段」的 rename 计划，保证目标列名不重复
+
+    ``column_map`` 是 profile 里「标准字段 -> 源列名」的声明**顺序**，同一源列被写成
+    多个标准字段时，先声明的那个赢。同一个标准字段也只能由一列来占：文件里已经有
+    ``保单号`` 时，再把 ``policy_id`` 改名成 ``保单号`` 会产生重名列，下游
+    ``df["保单号"]`` 拿到的是 DataFrame 而不是 Series，整批数据会被判成解析失败。
+    这里的取舍与 ``normalize_columns`` 一致：**先出现的列优先**，后来的映射只告警、不覆盖。
+    """
+    taken = {str(name) for name in columns}
+    used_sources: set[Any] = set()
+    rename: dict[Any, str] = {}
+    for field_name, source in column_map.items():
+        if source not in columns:
+            continue
+        if source == field_name:
+            continue  # 本身就是标准列名，不用改名
+        if source in used_sources:
+            logger.warning(
+                f"表头冲突：源列 {source!r} 同时被映射为多个标准字段，"
+                f"只保留先声明的那个，忽略到「{field_name}」的映射"
+            )
+            continue
+        if field_name in taken:
+            logger.warning(
+                f"表头冲突：{source!r} 也可映射为「{field_name}」，"
+                "但该标准列已存在，保留先出现的那一列"
+            )
+            continue
+        rename[source] = field_name
+        used_sources.add(source)
+        taken.discard(source)
+        taken.add(field_name)
+    return rename
+
+
 def _apply_profile(
     df: pd.DataFrame,
     profile: MappingProfile,
@@ -190,11 +262,10 @@ def _apply_profile(
 ) -> pd.DataFrame:
     """按 profile 把源列名换成标准字段，并做单位/日期归一"""
     if profile.columns:
-        source_map = profile.column_map
         header_line = profile.skiprows + 1
         missing = [
             (field_name, source)
-            for source, field_name in source_map.items()
+            for field_name, source in profile.columns.items()
             if source not in df.columns and field_name not in df.columns
         ]
         if missing:
@@ -207,7 +278,7 @@ def _apply_profile(
                     f"表头位于第 {header_line} 行；文件实际列名: {list(df.columns)}"
                 ),
             )
-        rename = {source: field for source, field in source_map.items() if source in df.columns}
+        rename = _plan_rename(profile.columns, df.columns)
         if rename:
             df = df.rename(columns=rename)
             logger.info(f"已按 profile 映射列名: {rename}")
@@ -343,8 +414,14 @@ def build_template(profile: Optional[Union[str, Path, MappingProfile]] = None) -
         空 DataFrame
     """
     active = load_profile(profile)
-    columns = list(active.columns.values()) if active.columns else list(CORE_FIELDS)
-    return pd.DataFrame(columns=columns)
+    return pd.DataFrame(columns=_template_columns(active, full=False))
+
+
+def _template_columns(profile: MappingProfile, full: bool = False) -> list[str]:
+    """模板用哪些列：profile 声明了源列名就跟 profile 走，否则标准 6 列 / 15 列"""
+    if profile.columns:
+        return list(profile.columns.values())
+    return list(STANDARD_FIELDS) if full else list(CORE_FIELDS)
 
 
 def write_template(
@@ -354,6 +431,13 @@ def write_template(
 ) -> Path:
     """把标准模板写到文件（.xlsx 或 .csv）
 
+    模板必须能「填完直接回读」，为此这里跟着 profile 走两件事：
+
+    * ``skiprows``：表头之前补等量的说明行，让表头正好落在 profile 期望的那一行，
+      否则用 ``skiprows=1`` 的 profile 回读会把表头吃掉、报「profile 声明的列找不到」；
+    * ``encoding``：CSV 用 profile 声明的编码写，否则 profile 写 gb18030 时
+      模板的 UTF-8 BOM 会被当成 GB18030 解出个 ``锘縩olicy_id``。
+
     Args:
         output_path: 输出路径，扩展名决定格式
         profile: 指定时按 profile 声明的源列名输出
@@ -362,18 +446,43 @@ def write_template(
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     active = load_profile(profile)
-    if active.columns:
-        columns = list(active.columns.values())
-    elif full:
-        columns = list(STANDARD_FIELDS)
-    else:
-        columns = list(CORE_FIELDS)
-    frame = pd.DataFrame(columns=columns)
+    columns = _template_columns(active, full=full)
+
+    # 说明行写成「一句话 + 补齐到同样列数的空单元格」，保证分隔符嗅探仍然稳定
+    rows: list[list[Any]] = []
+    if active.skiprows:
+        note = (
+            f"说明：本模板由 insurance-audit 生成，请保留第 {active.skiprows + 1} 行的表头，"
+            "数据从下一行开始填写；本行会被跳过"
+        )
+        rows.extend([note] + [""] * (len(columns) - 1) for _ in range(active.skiprows))
+    rows.append(list(columns))
+
+    frame = pd.DataFrame(rows)
     if path.suffix.lower() == ".csv":
-        frame.to_csv(path, index=False, encoding="utf-8-sig")
+        encoding = (
+            active.encoding
+            if active.encoding and active.encoding.lower() != "auto"
+            else "utf-8-sig"
+        )
+        try:
+            frame.to_csv(path, index=False, header=False, encoding=encoding)
+        except (LookupError, UnicodeEncodeError) as e:
+            raise IOFailure(
+                operation="write_template",
+                path=str(path.absolute()),
+                original_error=f"按 profile 的 encoding={encoding!r} 写模板失败: {e}",
+            ) from e
     else:
-        frame.to_excel(path, index=False)
-    logger.info(f"模板已生成: {path}（{len(columns)} 列）")
+        try:
+            frame.to_excel(path, index=False, header=False)
+        except Exception as e:
+            raise IOFailure(
+                operation="write_template",
+                path=str(path.absolute()),
+                original_error=str(e),
+            ) from e
+    logger.info(f"模板已生成: {path}（{len(columns)} 列，表头在第 {active.skiprows + 1} 行）")
     return path
 
 
@@ -395,7 +504,7 @@ def init_profile(
         source = Path(file_path)
         profile = MappingProfile()
         if source.suffix.lower() in CSV_SUFFIXES:
-            encoding, text = _decode_head(source)
+            encoding, text = _read_text(source, None)
             delimiter = _sniff_delimiter("\n".join(text.splitlines()[:20]))
             rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
             header = rows[skiprows] if len(rows) > skiprows else []
@@ -497,7 +606,7 @@ def inspect_file(file_path: Union[str, Path], skiprows: int = 0) -> dict[str, An
         info["columns"] = [str(name) for name in frame.columns]
         info["rows"] = int(len(frame))
     elif path.suffix.lower() in CSV_SUFFIXES:
-        encoding, text = _decode_head(path)
+        encoding, text = _read_text(path, None)
         delimiter = _sniff_delimiter("\n".join(text.splitlines()[:20]))
         rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
         body = rows[skiprows:]
@@ -561,8 +670,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.print_template:
             output = args.out or f"标准台账模板.{args.format}"
             path = write_template(output, profile=args.profile, full=args.full)
+            columns = list(build_template(profile=args.profile).columns)
+            if args.full and not columns:
+                columns = list(STANDARD_FIELDS)
             print(f"模板已生成: {path}")
-            print(f"列: {list(pd.read_excel(str(path)).columns) if path.suffix == '.xlsx' else ''}")
+            print(f"列: {columns}")
             return 0
         if args.init_profile:
             path = init_profile(args.init_profile, file_path=args.source, skiprows=args.skiprows)

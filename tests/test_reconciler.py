@@ -14,6 +14,7 @@ import pytest
 
 from insurance_audit.audit.reconciler import reconcile_dataframe
 from insurance_audit.models.claim import AuditSummary
+from insurance_audit.utils.config import MappingProfile
 
 
 class TestReconcileDataFrame:
@@ -193,3 +194,42 @@ class TestDifferenceLevels:
             1,
             1,
         )
+
+
+class TestProfileTolerance:
+    """profile 声明的容差要真的影响判定，而不只是写在校验里"""
+
+    @pytest.mark.unit
+    def test_profile_absolute_tolerance_is_applied(self) -> None:
+        """profile 的 tolerance_absolute 覆盖全局 0.01，50 元差异被判一致"""
+        # 报案 1000、比例 0.5、免赔 0 → 应赔 500，实赔 450（差 50）
+        df = _single_row(claim_amount=1000.0, actual_payout=450.0)
+        df["赔付比例"] = [0.50]
+
+        _, baseline = reconcile_dataframe(df)
+        assert baseline.unmatched_records == 1  # 全局容差下这是差异
+
+        profile = MappingProfile(tolerance_absolute=Decimal("99"))
+        result_df, summary = reconcile_dataframe(df, profile)
+        assert summary.matched_records == 1
+        assert result_df.iloc[0]["差异级别"] == "一致"
+        assert result_df.iloc[0]["审计状态"] == "一致"
+
+    @pytest.mark.unit
+    def test_profile_ratio_tolerance_is_applied(self) -> None:
+        """profile 的 tolerance_ratio 生效：10% 把 50 元差异吸收掉"""
+        df = _single_row(claim_amount=1000.0, actual_payout=450.0)
+        df["赔付比例"] = [0.50]
+
+        profile = MappingProfile(tolerance_ratio=Decimal("0.1"))
+        _, summary = reconcile_dataframe(df, profile)
+        assert summary.matched_records == 1
+
+    @pytest.mark.unit
+    def test_none_profile_keeps_global_tolerance(self) -> None:
+        """不传 profile 时行为与之前完全一致"""
+        df = _single_row(claim_amount=1000.0, actual_payout=450.0)
+        df["赔付比例"] = [0.50]
+
+        _, summary = reconcile_dataframe(df, None)
+        assert summary.unmatched_records == 1

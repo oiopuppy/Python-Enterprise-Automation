@@ -58,9 +58,12 @@ class AuditEngine:
         logger.info("审计引擎启动 — 执行完整工作流")
         started = time.perf_counter()
 
-        # 1. 读取数据（先把别名表头归一成标准列名）
-        df = normalize_columns(read_excel(self.input_file))
-        manifest = build_manifest(self.input_file, rows=len(df), output_path=self.output_file)
+        # 1. 读取数据（按环境变量 DATA_PROFILE 的映射把源表整形成标准列，再归一别名表头）
+        profile = settings.data.profile
+        df = normalize_columns(read_excel(self.input_file, profile=profile))
+        manifest = build_manifest(
+            self.input_file, rows=len(df), output_path=self.output_file, profile=profile
+        )
         self.manifest = manifest
 
         # 2. 数据校验
@@ -69,8 +72,8 @@ class AuditEngine:
         if validation_errors:
             logger.warning(f"数据校验发现 {len(validation_errors)} 个问题，已写入报告")
 
-        # 3. 执行对账
-        result_df, summary = reconcile_dataframe(df)
+        # 3. 执行对账（profile 声明的容差在这里覆盖全局配置）
+        result_df, summary = reconcile_dataframe(df, profile)
         summary.execution_time = f"{time.perf_counter() - started:.2f}s"
         summary.duplicate_policy_groups = sum(
             1 for issue in validation_errors if issue.code == CODE_DUPLICATE_POLICY

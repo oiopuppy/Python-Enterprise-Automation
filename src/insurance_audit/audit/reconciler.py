@@ -13,7 +13,7 @@
 """
 
 from decimal import Decimal
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import pandas as pd
 
@@ -24,6 +24,7 @@ from insurance_audit.models.claim import (
     AuditSummary,
     ClaimRecord,
 )
+from insurance_audit.utils.config import MappingProfile
 from insurance_audit.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -44,12 +45,17 @@ def _build_record_dict(row: pd.Series) -> dict[str, Union[Decimal, str]]:
     }
 
 
-def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
+def reconcile_dataframe(
+    df: pd.DataFrame,
+    profile: Optional[MappingProfile] = None,
+) -> tuple[pd.DataFrame, AuditSummary]:
     """
     对账处理：逐行计算 -> 对比 -> 标注状态
 
     Args:
         df: 输入数据 DataFrame（必须包含保单号、报案金额、免赔额、赔付比例、实际赔付金额列）
+        profile: 映射 profile；声明了 ``tolerance_absolute`` / ``tolerance_ratio``
+            时覆盖全局容差，留空则沿用全局配置
 
     Returns:
         (标注后的 DataFrame, 审计摘要)
@@ -76,6 +82,15 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
         return df, empty_summary
 
     logger.info(f"开始自动对账，共 {len(df)} 条记录")
+
+    # profile 声明了容差就覆盖全局配置（两者都为 None 时由 tolerance_for 取全局值）
+    absolute_tolerance = profile.tolerance_absolute if profile is not None else None
+    ratio_tolerance = profile.tolerance_ratio if profile is not None else None
+    if absolute_tolerance is not None or ratio_tolerance is not None:
+        logger.info(
+            "profile 容差生效: "
+            f"tolerance_absolute={absolute_tolerance}, tolerance_ratio={ratio_tolerance}"
+        )
 
     # 转换 DataFrame 为 ClaimRecord 列表；解析失败逐条留痕，不再静默跳过
     records: list[ClaimRecord] = []
@@ -108,7 +123,7 @@ def reconcile_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, AuditSummary]:
     detail_rows: list[dict[str, Any]] = []
 
     for record in records:
-        is_match, diff = record.reconcile()
+        is_match, diff = record.reconcile(absolute_tolerance, ratio_tolerance)
         total_calculated += record.calculated_payout or Decimal("0.00")
         total_actual += record.actual_payout
         total_discrepancy += diff

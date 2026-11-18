@@ -1,4 +1,4 @@
-﻿{
+{
   "role": "ledger",
   "columns": {
     "保单号": "policy_id",

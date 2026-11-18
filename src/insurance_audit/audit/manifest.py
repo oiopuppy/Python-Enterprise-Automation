@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from insurance_audit import __version__
-from insurance_audit.utils.config import settings
+from insurance_audit.utils.config import MappingProfile, settings
 from insurance_audit.utils.exceptions import IOFailure
 from insurance_audit.utils.logger import get_logger
 
@@ -50,8 +50,13 @@ def build_manifest(
     input_path: Union[str, Path],
     rows: int,
     output_path: Optional[Union[str, Path]] = None,
+    profile: Optional[MappingProfile] = None,
 ) -> dict[str, Any]:
-    """构造审计清单（不含生成时间以外的运行时信息）"""
+    """构造审计清单（不含生成时间以外的运行时信息）
+
+    ``profile`` 声明了容差覆盖时会额外记进 ``config``，让清单能证明
+    「这次审计用的是 profile 的容差还是全局容差」。
+    """
     insurance = settings.insurance
     manifest: dict[str, Any] = {
         "tool_version": __version__,
@@ -65,8 +70,24 @@ def build_manifest(
             "policy_prefix": insurance.policy_prefix,
             "min_claim_amount": str(insurance.min_claim_amount),
             "max_claim_amount": str(insurance.max_claim_amount),
+            "tolerance_absolute": str(insurance.tolerance_absolute),
+            "tolerance_ratio": str(insurance.tolerance_ratio),
         },
     }
+    if profile is not None:
+        manifest["profile"] = {
+            "role": profile.role,
+            "tolerance_absolute": (
+                None if profile.tolerance_absolute is None else str(profile.tolerance_absolute)
+            ),
+            "tolerance_ratio": (
+                None if profile.tolerance_ratio is None else str(profile.tolerance_ratio)
+            ),
+            "amount_unit": profile.amount_unit,
+            "encoding": profile.encoding,
+            "skiprows": profile.skiprows,
+            "sheet": profile.sheet,
+        }
     if output_path is not None:
         manifest["output"] = {"path": str(output_path)}
     return manifest
