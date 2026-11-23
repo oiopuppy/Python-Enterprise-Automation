@@ -34,6 +34,9 @@
 - 标准模型 v2 扩展 9 个可选字段：`赔案号`、`被保险人`、`保额`、`案件状态`、`收款账号哈希`、`报案日期`、`受理日期`、`核定日期`、`支付日期`。
 - 读取层 CLI：`python -m insurance_audit.data.reader`，支持 `--print-template`（6 列 / `--full` 15 列 / `--format csv` / 按 profile 出客户列名）、`--init-profile`（按实际表头猜 profile 草稿）、`--inspect`（看编码、分隔符、列名、行数）。
 - `tests/test_reader_formats.py`：41 个用例覆盖 CSV、多 sheet、profile、模板与 CLI，含大文件全量读取与「模板填完回读」回归。
+- 多源对账引擎 `audit/crosscheck.py`：台账 ↔ 支付流水按主键匹配（默认 `保单号 + 赔案号`，可用 `keys` 或 profile 覆盖），产出 `matched` / `amount_diff` / `ledger_only`（只记未付）/ `payment_only`（账外赔付）/ `status_diff` 五类结果；一对多、多对一、多对多合并成一组并标 `匹配类型`；每条结果带左右源行号。
+- `CrossCheckSummary` 汇总：两侧笔数与金额、各类分组计数、恒等式 `Σ台账 == Σ流水 + Σ差异` 与 `identity_gap`（全 Decimal，不过 float）；空主键、金额不可用、重复主键进 `issues` 并标原因，不抛异常。
+- `tests/test_crosscheck.py`：28 个用例，覆盖四类结果定位、恒等式精确相等、一对多/多对一/多对多、脏数据、状态差、主键与容差可配、输出列契约、mock 数据两表联调。
 
 ### 变更
 
@@ -48,7 +51,7 @@
 
 ### 测试
 
-- 用例总数 58 → 63 → 65 → 68 → 77 → 83 → 89 → 105 → 106 → 110 → 136 → 147 → 158；覆盖率 90%。
+- 用例总数 58 → 63 → 65 → 68 → 77 → 83 → 89 → 105 → 106 → 110 → 136 → 147 → 158 → 186；覆盖率 91%。
 
 ## [2.0.0] - 2026-11-10
 
