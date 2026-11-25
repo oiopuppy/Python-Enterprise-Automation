@@ -343,7 +343,7 @@ class TestOneToMany:
         assert row["对账结果"] == RESULT_MATCHED
         assert row["流水行号"] == "2,3,4"
         assert summary.one_to_many_groups == 1
-        # 一对多本身是「重复主键」疑点，要能看见
+        # 三笔金额一模一样：等额分期或重复付款，都要人工看一眼，所以仍记疑点
         duplicates = [item for item in summary.issues if item["reason"] == ISSUE_DUPLICATE_KEY]
         assert len(duplicates) == 1
         assert duplicates[0]["side"] == "流水"
@@ -487,7 +487,7 @@ class TestDirtyData:
         ]
         assert len(duplicates) == 1
         assert duplicates[0]["row"] == 2
-        assert "台账重复主键" in str(detail.iloc[0]["说明"])
+        assert "台账重复记账嫌疑" in str(detail.iloc[0]["说明"])
 
     def test_dirty_rows_do_not_enter_identity(self) -> None:
         """脏数据既不算进台账合计，也不算进流水合计"""
@@ -532,6 +532,30 @@ class TestStatusConsistency:
         assert row["状态一致"] == "否"
         assert summary.status_diff_groups == 1
         assert summary.matched_groups == 0
+
+    def test_reversed_status_mismatch_is_status_diff(self) -> None:
+        """台账说退票、流水说已赔付 —— issue #32 要求「或反之」也算状态差"""
+        ledger = _ledger(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "退票"}]
+        )
+        payment = _payment(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "已赔付",
+                }
+            ]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        row = detail.iloc[0]
+        assert row["对账结果"] == RESULT_STATUS_DIFF
+        assert row["状态一致"] == "否"
+        assert summary.status_diff_groups == 1
+        assert "台账退票" in str(row["说明"])
 
     def test_normal_status_keeps_matched(self) -> None:
         ledger = _ledger(
@@ -621,6 +645,45 @@ class TestKeyConfiguration:
         assert detail.iloc[0]["台账金额"] == Decimal("300.00")
         assert summary.matched_groups == 1
 
+    def test_profile_single_key_is_respected(self) -> None:
+        """profile 显式写 primary_key: ["保单号"] 必须生效，不能因为等于默认值被跳过"""
+        ledger = _ledger(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00},
+                {"保单号": "CL9900100", "赔案号": "C002", "实际赔付金额": 200.00},
+            ]
+        )
+        payment = _payment([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        profile = MappingProfile(primary_key=("保单号",))
+
+        detail, summary = crosscheck(ledger, payment, profile=profile)
+
+        assert summary.key_fields == ["保单号"]
+        assert len(detail) == 1, "同一保单的两个赔案要合成一组"
+        assert detail.iloc[0]["台账笔数"] == 2
+
+    def test_missing_default_key_raises_instead_of_degrading(self) -> None:
+        """缺一个默认键时直接报错，不能静默降级成单键把配置问题伪装成金额差"""
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = pd.DataFrame(
+            {"保单号": ["CL9900100"], "实际赔付金额": [100.00], "案件状态": ["成功"]}
+        )
+
+        with pytest.raises(InvalidColumnError) as excinfo:
+            crosscheck(ledger, payment)
+
+        assert "赔案号" in str(excinfo.value)
+
+    def test_profile_key_missing_column_raises(self) -> None:
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = _payment([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        profile = MappingProfile(primary_key=("保单号", "报案日期"))
+
+        with pytest.raises(InvalidColumnError) as excinfo:
+            crosscheck(ledger, payment, profile=profile)
+
+        assert "报案日期" in str(excinfo.value)
+
     def test_profile_tolerance_overrides_global(self) -> None:
         ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 1000.00}])
         payment = _payment([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 1005.00}])
@@ -655,6 +718,127 @@ class TestKeyConfiguration:
 
         with pytest.raises(InvalidColumnError):
             crosscheck(ledger, payment)
+
+
+class TestRowNumbers:
+    """行号口径：按 DataFrame 索引算，与单表对账的 idx + 2 一致"""
+
+    def test_row_numbers_follow_dataframe_index(self) -> None:
+        ledger = _ledger(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00},
+                {"保单号": "CL9900101", "赔案号": "C002", "实际赔付金额": 100.00},
+                {"保单号": "CL9900102", "赔案号": "C003", "实际赔付金额": 100.00},
+            ]
+        )
+        ledger.index = [10, 11, 12]
+        payment = _payment([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment.index = [50]
+
+        detail, _ = crosscheck(ledger, payment)
+
+        row = detail[detail["保单号"] == "CL9900100"].iloc[0]
+        assert row["台账行号"] == "12", "索引 10 是第 12 行（表头占第 1 行）"
+        assert row["流水行号"] == "52"
+
+    def test_non_integer_index_falls_back_to_position(self) -> None:
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        ledger.index = ["a"]
+        payment = _payment([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+
+        detail, _ = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["台账行号"] == "2"
+
+
+class TestKeyNormalization:
+    """主键归一：数字与文本写法不同的同一个人要能对上"""
+
+    def test_leading_zeros_and_text_numbers_match(self) -> None:
+        ledger = _ledger([{"保单号": "012345", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = _payment([{"保单号": "12345", "赔案号": "C001", "实际赔付金额": 100.00}])
+
+        detail, summary = crosscheck(ledger, payment)
+
+        assert len(detail) == 1
+        assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
+        assert summary.ledger_only_groups == 0
+
+    def test_float_nullable_key_column_matches_integer(self) -> None:
+        """空值让整列变 Float64，键会写成 12345.0，必须还能对上 12345"""
+        ledger = _ledger(
+            [
+                {"保单号": "12345", "赔案号": "C001", "实际赔付金额": 100.00, "案件状态": "已结案"},
+                {"保单号": None, "赔案号": "C009", "实际赔付金额": 1.00, "案件状态": "已结案"},
+            ]
+        )
+        ledger["保单号"] = ledger["保单号"].astype("Float64")
+        payment = _payment([{"保单号": "12345", "赔案号": "C001", "实际赔付金额": 100.00}])
+
+        detail, _ = crosscheck(ledger, payment)
+
+        targets = detail[detail["赔案号"] == "C001"]
+        assert len(targets) == 1
+        assert targets.iloc[0]["对账结果"] == RESULT_MATCHED
+
+    def test_long_numeric_key_keeps_precision(self) -> None:
+        ledger = _ledger([{"保单号": 123456789012345678, "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = _payment(
+            [{"保单号": "123456789012345678", "赔案号": "C001", "实际赔付金额": 100.00}]
+        )
+
+        detail, _ = crosscheck(ledger, payment)
+
+        assert len(detail) == 1
+        assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
+
+    def test_key_containing_separator_is_not_split(self) -> None:
+        """键里含 " / " 时不能串到下一列"""
+        ledger = _ledger([{"保单号": "P / 1", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = _payment([{"保单号": "P / 1", "赔案号": "C001", "实际赔付金额": 100.00}])
+
+        detail, _ = crosscheck(ledger, payment)
+
+        row = detail.iloc[0]
+        assert row["保单号"] == "P / 1"
+        assert row["赔案号"] == "C001"
+
+
+class TestDuplicateKeySemantics:
+    """同侧多行：不等额是正常分期，同额才是重复记账嫌疑"""
+
+    def test_uneven_installments_are_not_flagged(self) -> None:
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 900.00}])
+        payment = _payment(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 200.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 300.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00},
+            ]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        duplicates = [i for i in summary.issues if i["reason"] == ISSUE_DUPLICATE_KEY]
+        assert duplicates == [], "分期金额各不相同，是正常形态，不该当疑点"
+        assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
+        assert "流水分 3 笔支付" in str(detail.iloc[0]["说明"])
+
+    def test_identical_amounts_are_flagged(self) -> None:
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 900.00}])
+        payment = _payment(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 450.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 450.00},
+            ]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        duplicates = [i for i in summary.issues if i["reason"] == ISSUE_DUPLICATE_KEY]
+        assert len(duplicates) == 1
+        assert duplicates[0]["side"] == "流水"
+        assert "金额完全相同" in duplicates[0]["detail"]
 
 
 class TestOutputShape:

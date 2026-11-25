@@ -73,9 +73,23 @@ DEFAULT_KEY_FIELDS: tuple[str, ...] = ("保单号", "赔案号")
 DEFAULT_AMOUNT_FIELD = "实际赔付金额"
 DEFAULT_STATUS_FIELD = "案件状态"
 
-# 状态一致性：台账已结案，流水却是失败/退票/冲正 —— 钱没出去但账上结了
+# 状态一致性：两侧对「钱到底付出去没有」的判断相反
+# 台账侧「已结案」的写法 → 台账说钱该付/已付
 LEDGER_CLOSED_STATES: tuple[str, ...] = ("已结案", "结案", "已赔付", "赔付完成", "已完成")
-PAYMENT_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正")
+# 流水侧「已付成功」的写法
+PAYMENT_CLOSED_STATES: tuple[str, ...] = (
+    "成功",
+    "已成功",
+    "已支付",
+    "支付成功",
+    "已赔付",
+    "完成",
+    "已完成",
+)
+# 台账侧的退票/失败（台账挂着「钱退回来了」）
+LEDGER_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
+# 流水侧的退票/失败
+PAYMENT_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
 
 # 结果表列顺序（报告层按这个顺序落 sheet）
 DETAIL_COLUMNS: tuple[str, ...] = (
@@ -105,10 +119,11 @@ _EMPTY_KEY_TEXTS = {"", "nan", "none", "null", "<na>", "nat"}
 
 @dataclass(frozen=True)
 class _SideRow:
-    """一侧的一行：来源行号 + 主键 + 金额 + 状态"""
+    """一侧的一行：来源行号 + 主键（匹配用 tuple）+ 展示用主键 + 金额 + 状态"""
 
     row_no: int
-    key: str
+    key: tuple[str, ...]
+    display: tuple[str, ...]
     amount: Decimal
     status: str = ""
 
@@ -138,8 +153,57 @@ def _to_decimal(value: Any) -> Optional[Decimal]:
     return number if number.is_finite() else None
 
 
+def _to_status(value: Any) -> str:
+    """状态取值归一；空值给空串（表示没填）"""
+    text = _display_key_part(value)
+    return text if text is not None else ""
+
+
 def _to_key_text(value: Any) -> Optional[str]:
-    """主键取值归一：空值返回 None，其余转成去空白的字符串"""
+    """主键取值归一（用于匹配）：空值返回 None，数字与数字文本统一成同一个写法
+
+    台账和流水常常一边是数字单元格、一边是文本，同一笔会因此被拆成两条孤岛：
+
+    - Excel 里某列有空格子时整列会变成 ``Float64``，``12345`` 读出来是 ``"12345.0"``；
+    - 数字单元格 ``12345`` 与文本 ``"012345"``（前导零补位）写法不同；
+    - 19 位单号转成 ``float`` 会变成 ``"1.2345678901234568e+18"``。
+
+    这里把「整数值」统一成不带小数点、不带前导零、不用科学计数法的十进制串，
+    非数字文本（如 ``CL9900100``）原样保留。展示用的原始写法另走
+    ``_display_key_part``，不丢前导零。
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, float):
+        if pd.isna(value):
+            return None
+        if value.is_integer():
+            return str(int(value))
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return None
+        if value == value.to_integral_value():
+            return str(int(value))
+        return str(value)
+    text = str(value).strip()
+    if text.lower() in _EMPTY_KEY_TEXTS:
+        return None
+    # 纯整数文本：去掉前导零与正号，长数字也能精确处理（不经 float）
+    stripped = text.lstrip("+")
+    if stripped.isdigit():
+        return str(int(stripped))
+    if stripped.startswith("-") and stripped[1:].isdigit():
+        return str(int(stripped))
+    return text
+
+
+def _display_key_part(value: Any) -> Optional[str]:
+    """主键的展示写法：保留原始文本（含前导零），只去掉首尾空白"""
     if value is None:
         return None
     if isinstance(value, float) and pd.isna(value):
@@ -150,10 +214,10 @@ def _to_key_text(value: Any) -> Optional[str]:
     return text
 
 
-def _to_status(value: Any) -> str:
-    """状态取值归一；空值给空串（表示没填）"""
-    text = _to_key_text(value)
-    return text if text is not None else ""
+def _format_key(key: Sequence[str], display: Sequence[str]) -> str:
+    """把主键写成人能读的一串（只用于 issues 与日志，匹配用 tuple）"""
+    parts = list(display) if display else list(key)
+    return " / ".join(parts)
 
 
 # =============================================================================
@@ -186,19 +250,24 @@ def _prepare_side(
     """把一侧 DataFrame 拆成有效行与脏数据清单
 
     主键为空、金额不可用的行不会抛异常，而是进 issues（带来源行号与原因）。
-    来源行号按「表头占第 1 行」计算，与 ``reconciler`` 的口径一致。
+    来源行号按「表头占第 1 行」计算，与 ``reconciler`` 的口径一致：取 DataFrame
+    索引 + 2，而不是 enumerate 的序号 —— 上游做过过滤/重排时，序号会指错行。
     """
     rows: list[_SideRow] = []
     issues: list[dict[str, Any]] = []
 
-    for offset, (_, raw_row) in enumerate(df.iterrows(), start=2):
+    for position, (idx, raw_row) in enumerate(df.iterrows()):
+        row_no = _row_number(idx, position)
         key_parts = [_to_key_text(raw_row[name]) for name in key_fields]
-        key_text = " / ".join("" if part is None else part for part in key_parts)
+        display_parts = [_display_key_part(raw_row[name]) for name in key_fields]
+        key_tuple = tuple("" if part is None else part for part in key_parts)
+        display_tuple = tuple("" if part is None else part for part in display_parts)
+        key_text = _format_key(key_tuple, display_tuple)
         if any(part is None for part in key_parts):
             issues.append(
                 {
                     "side": side,
-                    "row": offset,
+                    "row": row_no,
                     "reason": ISSUE_EMPTY_KEY,
                     "key": key_text,
                     "amount": None,
@@ -211,7 +280,7 @@ def _prepare_side(
             issues.append(
                 {
                     "side": side,
-                    "row": offset,
+                    "row": row_no,
                     "reason": ISSUE_INVALID_AMOUNT,
                     "key": key_text,
                     "amount": str(raw_row[amount_field]),
@@ -220,14 +289,35 @@ def _prepare_side(
             continue
 
         status = _to_status(raw_row[status_field]) if status_field is not None else ""
-        rows.append(_SideRow(row_no=offset, key=key_text, amount=amount, status=status))
+        rows.append(
+            _SideRow(
+                row_no=row_no,
+                key=key_tuple,
+                display=display_tuple,
+                amount=amount,
+                status=status,
+            )
+        )
 
     return rows, issues
 
 
-def _group(rows: Sequence[_SideRow]) -> dict[str, list[_SideRow]]:
+def _row_number(index: Any, position: int) -> int:
+    """DataFrame 索引 → 表格行号（表头占第 1 行）
+
+    与 ``reconciler`` 的 ``idx + 2`` 同口径。索引不是整数（上游重排、MultiIndex）
+    时退化成位置序号 + 2，避免出现 ``TypeError``。
+    """
+    if isinstance(index, bool):
+        return position + 2
+    if isinstance(index, (int, float)):
+        return int(index) + 2
+    return position + 2
+
+
+def _group(rows: Sequence[_SideRow]) -> dict[tuple[str, ...], list[_SideRow]]:
     """按主键分组（保持首次出现的顺序，报告读起来稳定）"""
-    buckets: dict[str, list[_SideRow]] = {}
+    buckets: dict[tuple[str, ...], list[_SideRow]] = {}
     for row in rows:
         buckets.setdefault(row.key, []).append(row)
     return buckets
@@ -296,31 +386,53 @@ def _resolve_keys(
     profile: Optional[MappingProfile],
     keys: Optional[Sequence[str]],
 ) -> tuple[str, ...]:
-    """决定主键：显式传入 > profile 声明 > 默认「保单号 + 赔案号」"""
+    """决定主键：显式传入 > profile 声明 > 默认「保单号 + 赔案号」
+
+    profile 只要**显式声明了** ``primary_key`` 就用它（含最常见的单键
+    ``["保单号"]``）。不能拿「是否等于默认值」当哨兵：默认值本身就是
+    ``("保单号",)``，那样 profile 里写 ``["保单号"]`` 会被当成「没配」而跳过，
+    要按保单汇总的用户就永远配不出来。
+    """
     if keys:
         return tuple(keys)
 
-    if (
-        profile is not None
-        and tuple(profile.primary_key) != ("保单号",)
-        and all(
-            name in ledger_df.columns and name in payment_df.columns for name in profile.primary_key
-        )
-    ):
+    if profile is not None and profile.primary_key:
+        missing = [name for name in profile.primary_key if name not in ledger_df.columns] or [
+            name for name in profile.primary_key if name not in payment_df.columns
+        ]
+        if missing:
+            raise InvalidColumnError(
+                missing,
+                identified_columns=[str(name) for name in ledger_df.columns],
+                expected_columns=list(profile.primary_key),
+            )
         return tuple(profile.primary_key)
 
-    available = [
-        name
-        for name in DEFAULT_KEY_FIELDS
-        if name in ledger_df.columns and name in payment_df.columns
+    missing_defaults = [name for name in DEFAULT_KEY_FIELDS if name not in ledger_df.columns] or [
+        name for name in DEFAULT_KEY_FIELDS if name not in payment_df.columns
     ]
-    if not available:
+    if missing_defaults:
+        # 缺一个默认键就降级成单键，会把「配置问题」伪装成「金额对不上」，所以报错
         raise InvalidColumnError(
-            list(DEFAULT_KEY_FIELDS),
+            missing_defaults,
             identified_columns=[str(name) for name in ledger_df.columns],
             expected_columns=list(DEFAULT_KEY_FIELDS),
         )
-    return tuple(available)
+    return DEFAULT_KEY_FIELDS
+
+
+def _identical_count(rows: Sequence[_SideRow]) -> int:
+    """同一组里金额完全相同的最大笔数
+
+    一对多本身是正常形态（分期打款、退票后重付），只有「多笔金额一模一样」
+    才像重复记账。返回 1 表示没有同额重复。
+    """
+    if not rows:
+        return 0
+    counts: dict[Decimal, int] = {}
+    for row in rows:
+        counts[row.amount] = counts.get(row.amount, 0) + 1
+    return max(counts.values())
 
 
 def _match_type(ledger_count: int, payment_count: int) -> str:
@@ -338,10 +450,30 @@ def _match_type(ledger_count: int, payment_count: int) -> str:
 
 
 def _status_conflict(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> bool:
-    """台账已结案，但流水里有失败/退票 —— 状态差"""
-    closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
-    failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
-    return closed and failed
+    """状态差：两侧对「这笔钱到底付没付」说法相反
+
+    两个方向都算：
+
+    - 台账说已结案/已赔付，流水却是失败/退票/冲正 —— 钱没出去但账上结了；
+    - 台账说退票/失败，流水却是已赔付 —— 钱出去了但账上还挂着没付。
+
+    issue #32 的原文是「台账『已结案』但流水『退票/失败』，**或反之**」，
+    只判一个方向会把后者漏成「一致」。
+    """
+    ledger_closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
+    ledger_failed = any(row.status in LEDGER_FAILED_STATES for row in ledger)
+    payment_closed = any(row.status in PAYMENT_CLOSED_STATES for row in payment)
+    payment_failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
+    return (ledger_closed and payment_failed) or (ledger_failed and payment_closed)
+
+
+def _status_conflict_note(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> str:
+    """给出能读懂的状态差说明（哪个方向）"""
+    ledger_closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
+    payment_failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
+    if ledger_closed and payment_failed:
+        return "台账已结案但流水失败/退票"
+    return "台账退票/失败但流水已赔付"
 
 
 def crosscheck(
@@ -475,9 +607,11 @@ def crosscheck(
                 status_consistent = not conflict
                 if conflict and result == RESULT_MATCHED:
                     result = RESULT_STATUS_DIFF
-                    note_parts.append("台账已结案但流水失败/退票")
+                    note_parts.append(_status_conflict_note(ledger_items, payment_items))
                 elif conflict:
-                    note_parts.append("状态也不一致（台账已结案、流水失败/退票）")
+                    note_parts.append(
+                        f"状态也不一致（{_status_conflict_note(ledger_items, payment_items)}）"
+                    )
         elif ledger_items:
             result = RESULT_LEDGER_ONLY
             status_consistent = True if status_columns else None
@@ -489,30 +623,45 @@ def crosscheck(
             note_parts.append("流水有付款、台账无对应记录（可能是账外赔付）")
             payment_only_amount += payment_amount
 
-        if len(ledger_items) > 1:
+        # 同侧多行：金额不等的合并是正常形态（分期打款、退票重付），只写进说明；
+        # 只有「多行金额完全相同」才当成重复记账嫌疑报进 issues，避免把正常分期
+        # 也标成疑点、把真疑点淹没
+        ledger_repeat = _identical_count(ledger_items)
+        payment_repeat = _identical_count(payment_items)
+        if ledger_repeat > 1:
             issues.append(
                 {
                     "side": "台账",
                     "row": ledger_items[0].row_no,
                     "reason": ISSUE_DUPLICATE_KEY,
-                    "key": key,
+                    "key": _format_key(key, ledger_items[0].display),
                     "amount": str(ledger_amount),
-                    "detail": f"同一主键在台账出现 {len(ledger_items)} 次",
+                    "detail": (
+                        f"同一主键在台账出现 {len(ledger_items)} 次、金额完全相同"
+                        f"（{ledger_items[0].amount}），可能是重复记账，请人工确认"
+                    ),
                 }
             )
-            note_parts.append(f"台账重复主键 {len(ledger_items)} 次")
-        if len(payment_items) > 1:
+            note_parts.append(f"台账重复记账嫌疑 {ledger_repeat} 笔同额")
+        elif len(ledger_items) > 1:
+            note_parts.append(f"台账分 {len(ledger_items)} 笔合并")
+        if payment_repeat > 1:
             issues.append(
                 {
                     "side": "流水",
                     "row": payment_items[0].row_no,
                     "reason": ISSUE_DUPLICATE_KEY,
-                    "key": key,
+                    "key": _format_key(key, payment_items[0].display),
                     "amount": str(payment_amount),
-                    "detail": f"同一主键在流水出现 {len(payment_items)} 次（可能退票重付）",
+                    "detail": (
+                        f"同一主键在流水出现 {len(payment_items)} 次、金额完全相同"
+                        f"（{payment_items[0].amount}），可能是重复付款或同额分期，请人工确认"
+                    ),
                 }
             )
-            note_parts.append(f"流水重复主键 {len(payment_items)} 次")
+            note_parts.append(f"流水重复记账嫌疑 {payment_repeat} 笔同额")
+        elif len(payment_items) > 1:
+            note_parts.append(f"流水分 {len(payment_items)} 笔支付")
 
         counters[result] += 1
         if match_type in match_counters:
@@ -522,13 +671,16 @@ def crosscheck(
         payment_total += payment_amount
         diff_total += diff
 
-        key_parts = tuple(key.split(" / ")) if len(key_fields) > 1 else (key,)
+        # 主键是 tuple，直接按位置取，不再拼字符串再 split（键里含分隔符会串列）
         detail_row: dict[str, Any] = {
             "对账结果": result,
             "匹配类型": match_type,
         }
+        display_parts = (
+            ledger_items[0].display if ledger_items else (payment_items[0].display or key)
+        )
         for index, name in enumerate(key_fields):
-            detail_row[name] = key_parts[index] if index < len(key_parts) else ""
+            detail_row[name] = display_parts[index] if index < len(display_parts) else ""
         detail_row.update(
             {
                 "台账笔数": len(ledger_items),
