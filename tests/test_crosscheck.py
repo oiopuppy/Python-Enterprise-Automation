@@ -589,6 +589,70 @@ class TestStatusConsistency:
         assert summary.status_diff_groups == 1
         assert "台账退票" in str(row["说明"])
 
+    def test_closed_ledger_with_pending_payment_is_status_diff(self) -> None:
+        """台账说已结案、流水还在待支付/处理中 —— 最常见的状态差，也得报
+
+        原实现只认「已结案 × 退票/失败」这两个极端相反的组合，流水写「待支付」
+        「处理中」一律算「状态一致=是」，等于把最该看的漏掉了。
+        """
+        for pending in ("待支付", "处理中", "未支付", "在途"):
+            ledger = _ledger(
+                [
+                    {
+                        "保单号": "CL9900100",
+                        "赔案号": "C001",
+                        "实际赔付金额": 400.00,
+                        "案件状态": "已结案",
+                    }
+                ]
+            )
+            payment = _payment(
+                [
+                    {
+                        "保单号": "CL9900100",
+                        "赔案号": "C001",
+                        "实际赔付金额": 400.00,
+                        "案件状态": pending,
+                    }
+                ]
+            )
+
+            detail, summary = crosscheck(ledger, payment)
+
+            row = detail.iloc[0]
+            assert row["对账结果"] == RESULT_STATUS_DIFF, f"流水={pending} 应报状态差"
+            assert row["状态一致"] == "否"
+            assert summary.status_diff_groups == 1
+            assert "还没付" in str(row["说明"])
+
+    def test_pending_ledger_with_successful_payment_is_status_diff(self) -> None:
+        """台账还挂着待支付、流水已经成功 —— 钱付了账上没销，也是状态差
+
+        上面那条是「台账已结案 + 流水待支付」，这条是它的反向。只补单向的话，
+        同一类错换个方向漏掉，等于把「对称」这两个字写在了注释里。
+        """
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "待支付",
+                }
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "成功"}]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        row = detail.iloc[0]
+        assert row["对账结果"] == RESULT_STATUS_DIFF
+        assert row["状态一致"] == "否"
+        assert summary.status_diff_groups == 1
+        assert "未销账" in str(row["说明"])
+
     def test_normal_status_keeps_matched(self) -> None:
         ledger = _ledger(
             [
@@ -820,6 +884,27 @@ class TestKeyConfiguration:
 
         assert "赔案号" in str(excinfo.value)
 
+    def test_missing_key_error_says_which_side(self) -> None:
+        """缺列报错要说清是哪一侧缺，且列出那一侧实际的列
+
+        实测过的错法：赔案号是流水缺的，消息里的「已识别的列」却是台账的列，
+        照着消息排查会以为文件里已经有这一列了。
+        """
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = pd.DataFrame(
+            {"保单号": ["CL9900100"], "实际赔付金额": [100.00], "案件状态": ["成功"]}
+        )
+
+        with pytest.raises(InvalidColumnError) as excinfo:
+            crosscheck(ledger, payment)
+
+        message = str(excinfo.value)
+        assert "流水数据文件缺少必要列" in message
+        assert "赔案号" in message
+        assert excinfo.value.details.get("side") == "流水"
+        # 「已识别的列」必须是流水自己的列，不能拿台账的列顶替
+        assert "赔案号" not in str(excinfo.value.details.get("identified_columns"))
+
     def test_profile_key_missing_column_raises(self) -> None:
         ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
         payment = _payment([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00}])
@@ -938,6 +1023,22 @@ class TestKeyNormalization:
         assert len(detail) == 1
         assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
 
+    def test_text_number_with_decimal_point_matches_integer(self) -> None:
+        """CSV 里常见的文本写法 "12345.0" 必须能和 12345 对上
+
+        这是 Float64 空值列的另一种形态：整列被读成文本，键变成 "12345.0"，
+        与流水的 "12345" 对不上，同一笔会被拆成两条孤岛。
+        """
+        ledger = _ledger([{"保单号": "12345.0", "赔案号": "C001", "实际赔付金额": 100.00}])
+        payment = _payment([{"保单号": "12345", "赔案号": "C001", "实际赔付金额": 100.00}])
+
+        detail, summary = crosscheck(ledger, payment)
+
+        assert len(detail) == 1, "写法和数值都不同才该拆成两条"
+        assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
+        assert summary.ledger_only_groups == 0
+        assert summary.payment_only_groups == 0
+
     def test_key_containing_separator_is_not_split(self) -> None:
         """键里含 " / " 时不能串到下一列"""
         ledger = _ledger([{"保单号": "P / 1", "赔案号": "C001", "实际赔付金额": 100.00}])
@@ -1012,6 +1113,29 @@ class TestDuplicateKeySemantics:
         assert "其中 2 笔金额完全相同" in issue["detail"]
         assert "（450" in issue["detail"]
         assert "3 笔金额完全相同" not in issue["detail"], "整组 3 行并不都同额"
+
+    def test_duplicate_issue_points_at_the_repeated_rows(self) -> None:
+        """疑点里的行号要指向真正重复的那几行，不能指向整组第一行
+
+        实测过的错法：流水是 100 + 450 + 450，行号报的是第 2 行（金额 100 那笔），
+        照着这个行号去人工复核会核对到一笔完全无关的明细。
+        """
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 1000.00}])
+        payment = _payment(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 450.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 450.00},
+            ]
+        )
+
+        _, summary = crosscheck(ledger, payment)
+
+        duplicates = [i for i in summary.issues if i["reason"] == ISSUE_DUPLICATE_KEY]
+        assert len(duplicates) == 1
+        issue = duplicates[0]
+        assert issue["row"] == 3, "重复的两笔在第 3、4 行（表头占第 1 行）"
+        assert issue["rows"] == [3, 4]
 
 
 class TestOutputShape:

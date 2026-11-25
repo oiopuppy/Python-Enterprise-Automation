@@ -30,6 +30,7 @@
 ``0.1 + 0.2 != 0.3`` 的浮点误差。
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -90,6 +91,25 @@ PAYMENT_CLOSED_STATES: tuple[str, ...] = (
 LEDGER_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
 # 流水侧的退票/失败
 PAYMENT_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
+# 两侧「钱还没出去」的中间态：台账说已结案、流水还停在待支付，同样是状态差
+LEDGER_PENDING_STATES: tuple[str, ...] = (
+    "待支付",
+    "未支付",
+    "待处理",
+    "处理中",
+    "审核中",
+    "在途",
+    "已受理",
+)
+PAYMENT_PENDING_STATES: tuple[str, ...] = (
+    "待支付",
+    "未支付",
+    "待处理",
+    "处理中",
+    "审核中",
+    "在途",
+    "已受理",
+)
 
 # 结果表列顺序（报告层按这个顺序落 sheet）
 DETAIL_COLUMNS: tuple[str, ...] = (
@@ -110,6 +130,8 @@ DETAIL_COLUMNS: tuple[str, ...] = (
 )
 
 _EMPTY_KEY_TEXTS = {"", "nan", "none", "null", "<na>", "nat"}
+# 「123.0」「-45.00」这类整数形态的文本（导出工具把数字写成了文本时会出现）
+_INTEGER_LIKE_TEXT = re.compile(r"[+-]?\d+\.0+")
 
 
 # =============================================================================
@@ -199,6 +221,10 @@ def _to_key_text(value: Any) -> Optional[str]:
         return str(int(stripped))
     if stripped.startswith("-") and stripped[1:].isdigit():
         return str(int(stripped))
+    # 「123.0」这类整数形态的小数文本也要归一：一侧是数字单元格 123、另一侧是
+    # 文本 "123.0"（导出工具把数字写成了文本）时，不归一就会拆成两条孤岛
+    if _INTEGER_LIKE_TEXT.fullmatch(stripped):
+        return str(int(Decimal(stripped)))
     return text
 
 
@@ -228,14 +254,21 @@ def _format_key(key: Sequence[str], display: Sequence[str]) -> str:
 def _require_columns(
     df: pd.DataFrame,
     columns: Sequence[str],
+    *,
+    side: str,
 ) -> None:
-    """列缺失时抛 InvalidColumnError，报错要写明缺哪一列"""
+    """列缺失时抛 InvalidColumnError，报错要写明是哪一侧、缺哪一列
+
+    ``identified_columns`` 必须取**这一侧**的实际列名：两侧是两份文件，
+    拿台账的列去解释流水缺列，会让人以为文件里明明有该列。
+    """
     missing = [name for name in columns if name not in df.columns]
     if missing:
         raise InvalidColumnError(
             missing,
             identified_columns=[str(name) for name in df.columns],
             expected_columns=list(columns),
+            side=side,
         )
 
 
@@ -397,48 +430,37 @@ def _resolve_keys(
         return tuple(keys)
 
     if profile is not None and profile.primary_key:
-        missing = [name for name in profile.primary_key if name not in ledger_df.columns] or [
-            name for name in profile.primary_key if name not in payment_df.columns
-        ]
-        if missing:
-            raise InvalidColumnError(
-                missing,
-                identified_columns=[str(name) for name in ledger_df.columns],
-                expected_columns=list(profile.primary_key),
-            )
+        _require_columns(ledger_df, profile.primary_key, side="台账")
+        _require_columns(payment_df, profile.primary_key, side="流水")
         return tuple(profile.primary_key)
 
-    missing_defaults = [name for name in DEFAULT_KEY_FIELDS if name not in ledger_df.columns] or [
-        name for name in DEFAULT_KEY_FIELDS if name not in payment_df.columns
-    ]
-    if missing_defaults:
-        # 缺一个默认键就降级成单键，会把「配置问题」伪装成「金额对不上」，所以报错
-        raise InvalidColumnError(
-            missing_defaults,
-            identified_columns=[str(name) for name in ledger_df.columns],
-            expected_columns=list(DEFAULT_KEY_FIELDS),
-        )
+    # 缺一个默认键就降级成单键，会把「配置问题」伪装成「金额对不上」，所以报错。
+    # 两侧分别检查：只报一侧会漏掉另一侧缺的键（原实现用 or 短路，实测吞掉流水缺的那个）
+    _require_columns(ledger_df, DEFAULT_KEY_FIELDS, side="台账")
+    _require_columns(payment_df, DEFAULT_KEY_FIELDS, side="流水")
     return DEFAULT_KEY_FIELDS
 
 
-def _top_repeat(rows: Sequence[_SideRow]) -> tuple[int, Optional[Decimal]]:
-    """同一组里出现次数最多的那个金额，以及它出现的笔数
+def _top_repeat(rows: Sequence[_SideRow]) -> tuple[int, Optional[Decimal], list[int]]:
+    """同一组里出现次数最多的那个金额：笔数、金额、以及它落在哪几行
 
     一对多本身是正常形态（分期打款、退票后重付），只有「多笔金额一模一样」
-    才像重复记账。返回 ``(笔数, 金额)``；笔数为 1 表示没有同额重复，金额为
-    ``None`` 表示这一侧没有有效行。
+    才像重复记账。返回 ``(笔数, 金额, 行号列表)``；笔数为 1 表示没有同额重复，
+    金额为 ``None`` 表示这一侧没有有效行。
 
-    金额必须跟着笔数一起返回：组里可能是 ``100 + 450 + 450``，此时「重复」
-    的是 450、重复 2 笔，而不是「3 笔全是 100」—— 只报笔数会把原因说错，
-    也会把不相干的那笔金额当成本组金额（实测过这个错法）。
+    金额与行号必须跟着笔数一起返回：组里可能是 ``100 + 450 + 450``，此时
+    「重复」的是 450、重复 2 笔、落在第 3、4 行，而不是「3 笔全是 100」——
+    只报笔数会把原因说错，只报组里第一行会把位置指到不相干的那一行
+    （实测过这两个错法）。
     """
     if not rows:
-        return 0, None
+        return 0, None, []
     counts: dict[Decimal, int] = {}
     for row in rows:
         counts[row.amount] = counts.get(row.amount, 0) + 1
     amount = max(counts, key=lambda value: counts[value])
-    return counts[amount], amount
+    rows_no = [row.row_no for row in rows if row.amount == amount]
+    return counts[amount], amount, rows_no
 
 
 def _match_type(ledger_count: int, payment_count: int) -> str:
@@ -458,28 +480,49 @@ def _match_type(ledger_count: int, payment_count: int) -> str:
 def _status_conflict(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> bool:
     """状态差：两侧对「这笔钱到底付没付」说法相反
 
-    两个方向都算：
+    四个方向都算：
 
     - 台账说已结案/已赔付，流水却是失败/退票/冲正 —— 钱没出去但账上结了；
-    - 台账说退票/失败，流水却是已赔付 —— 钱出去了但账上还挂着没付。
+    - 台账说退票/失败，流水却是已赔付 —— 钱出去了但账上还挂着没付；
+    - 台账说已结案，流水还停在待支付/处理中 —— 账上结了但钱其实还没付；
+    - 台账还停在待支付/处理中，流水却已成功 —— 钱付了但账上没销账。
 
     issue #32 的原文是「台账『已结案』但流水『退票/失败』，**或反之**」，
-    只判一个方向会把后者漏成「一致」。
+    只判一个方向会把后者漏成「一致」；后两个方向是实务里最常见的两种错，
+    只判「极端相反」的组合同样会漏成「一致」（实测：已结案 + 待支付
+    原先报「状态一致=是」）。
     """
     ledger_closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
     ledger_failed = any(row.status in LEDGER_FAILED_STATES for row in ledger)
+    ledger_pending = any(row.status in LEDGER_PENDING_STATES for row in ledger)
     payment_closed = any(row.status in PAYMENT_CLOSED_STATES for row in payment)
     payment_failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
-    return (ledger_closed and payment_failed) or (ledger_failed and payment_closed)
+    payment_pending = any(row.status in PAYMENT_PENDING_STATES for row in payment)
+    return (
+        (ledger_closed and payment_failed)
+        or (ledger_failed and payment_closed)
+        or (ledger_closed and payment_pending)
+        or (ledger_pending and payment_closed)
+    )
 
 
 def _status_conflict_note(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> str:
     """给出能读懂的状态差说明（哪个方向）"""
     ledger_closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
+    ledger_failed = any(row.status in LEDGER_FAILED_STATES for row in ledger)
+    ledger_pending = any(row.status in LEDGER_PENDING_STATES for row in ledger)
+    payment_closed = any(row.status in PAYMENT_CLOSED_STATES for row in payment)
     payment_failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
+    payment_pending = any(row.status in PAYMENT_PENDING_STATES for row in payment)
     if ledger_closed and payment_failed:
         return "台账已结案但流水失败/退票"
-    return "台账退票/失败但流水已赔付"
+    if ledger_failed and payment_closed:
+        return "台账退票/失败但流水已赔付"
+    if ledger_closed and payment_pending:
+        return "台账已结案但流水还没付（待支付/处理中）"
+    if ledger_pending and payment_closed:
+        return "台账还挂着待支付/处理中，但流水已成功（账上未销账）"
+    return "两侧状态不一致"
 
 
 def _status_comparable(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> bool:
@@ -549,8 +592,8 @@ def crosscheck(
             list(ledger_df.columns),
             list(payment_df.columns),
         )
-    _require_columns(ledger_df, list(key_fields) + [ledger_amount_field])
-    _require_columns(payment_df, list(key_fields) + [payment_amount_field])
+    _require_columns(ledger_df, list(key_fields) + [ledger_amount_field], side="台账")
+    _require_columns(payment_df, list(key_fields) + [payment_amount_field], side="流水")
 
     ledger_rows, ledger_issues = _prepare_side(
         ledger_df,
@@ -663,13 +706,14 @@ def crosscheck(
         # 同侧多行：金额不等的合并是正常形态（分期打款、退票重付），只写进说明；
         # 只有「多行金额完全相同」才当成重复记账嫌疑报进 issues，避免把正常分期
         # 也标成疑点、把真疑点淹没
-        ledger_repeat, ledger_repeat_amount = _top_repeat(ledger_items)
-        payment_repeat, payment_repeat_amount = _top_repeat(payment_items)
+        ledger_repeat, ledger_repeat_amount, ledger_repeat_rows = _top_repeat(ledger_items)
+        payment_repeat, payment_repeat_amount, payment_repeat_rows = _top_repeat(payment_items)
         if ledger_repeat > 1:
             issues.append(
                 {
                     "side": "台账",
-                    "row": ledger_items[0].row_no,
+                    "row": ledger_repeat_rows[0],
+                    "rows": ledger_repeat_rows,
                     "reason": ISSUE_DUPLICATE_KEY,
                     "key": _format_key(key, ledger_items[0].display),
                     "amount": str(ledger_repeat_amount),
@@ -687,7 +731,8 @@ def crosscheck(
             issues.append(
                 {
                     "side": "流水",
-                    "row": payment_items[0].row_no,
+                    "row": payment_repeat_rows[0],
+                    "rows": payment_repeat_rows,
                     "reason": ISSUE_DUPLICATE_KEY,
                     "key": _format_key(key, payment_items[0].display),
                     "amount": str(payment_repeat_amount),

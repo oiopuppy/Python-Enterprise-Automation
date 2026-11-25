@@ -154,10 +154,14 @@ class InvalidColumnError(DataException):
         missing_columns: list[str],
         identified_columns: Optional[list[str]] = None,
         expected_columns: Optional[list[str]] = None,
+        side: Optional[str] = None,
     ) -> None:
         identified = identified_columns or []
         expected = expected_columns or []
-        parts = [f"数据文件缺少必要列: {missing_columns}"]
+        # side 用来点明是哪一侧（多源对账里台账和流水是两份文件）：
+        # 不写清楚，调用方会拿另一侧的实际列名去对，越查越糊涂
+        prefix = f"{side}数据文件缺少必要列" if side else "数据文件缺少必要列"
+        parts = [f"{prefix}: {missing_columns}"]
         if identified:
             parts.append(f"已识别的列: {identified}")
         if expected:
@@ -169,6 +173,7 @@ class InvalidColumnError(DataException):
                 "missing_columns": missing_columns,
                 "identified_columns": identified,
                 "expected_columns": expected,
+                **({"side": side} if side else {}),
             },
         )
 
