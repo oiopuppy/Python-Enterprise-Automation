@@ -632,6 +632,32 @@ class TestStatusConsistency:
         assert detail.iloc[0]["状态一致"] == "—"
         assert summary.status_diff_groups == 0
 
+    def test_missing_status_column_on_one_side_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """状态列只在一边有：检查静默关闭，必须留一条 warn
+
+        否则报告里只有「—」，看起来像「查过了没问题」，实际一行都没比。
+        """
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "已结案",
+                }
+            ]
+        )
+        payment = pd.DataFrame([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00}])
+
+        with caplog.at_level("WARNING"):
+            detail, _ = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["状态一致"] == "—"
+        assert any("状态检查已关闭" in record.message for record in caplog.records)
+        assert any("流水" in record.message for record in caplog.records)
+
     def test_single_side_rows_report_no_status_verdict(self) -> None:
         """只有一侧有行时谈不上「状态一致」，必须报 — 而不是「是」"""
         ledger = _ledger(
@@ -653,6 +679,44 @@ class TestStatusConsistency:
         by_result = {row["对账结果"]: row for _, row in detail.iterrows()}
         assert by_result[RESULT_LEDGER_ONLY]["状态一致"] == "—"
         assert by_result[RESULT_PAYMENT_ONLY]["状态一致"] == "—"
+
+    def test_blank_status_on_one_side_reports_no_verdict(self) -> None:
+        """状态列存在但一侧没填，就没法比，必须报 — 而不是「是」
+
+        原实现只看「状态列在不在」，两侧都有行就直接 `not conflict` 判「是」，
+        等于给了一份它给不出的保证。
+        """
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "已结案",
+                }
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": ""}]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["状态一致"] == "—", "流水状态是空的，不能说「一致」"
+        assert summary.status_diff_groups == 0
+
+    def test_both_sides_blank_status_reports_no_verdict(self) -> None:
+        ledger = _ledger(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": ""}]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": ""}]
+        )
+
+        detail, _ = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["状态一致"] == "—"
+        assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
 
 
 class TestKeyConfiguration:
@@ -921,6 +985,33 @@ class TestDuplicateKeySemantics:
         assert len(duplicates) == 1
         assert duplicates[0]["side"] == "流水"
         assert "金额完全相同" in duplicates[0]["detail"]
+
+    def test_duplicate_detail_names_the_repeated_amount(self) -> None:
+        """组里只有一部分同额时，报的必须是重复那笔的金额与笔数
+
+        实测过的错法：流水是 100 + 450 + 450，报成「出现 3 次、金额完全相同
+        （100.00）」—— 笔数取成了整组行数、金额取成了第一行的金额，两个都不对。
+        """
+        ledger = _ledger([{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 1000.00}])
+        payment = _payment(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 450.00},
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 450.00},
+            ]
+        )
+
+        _, summary = crosscheck(ledger, payment)
+
+        duplicates = [i for i in summary.issues if i["reason"] == ISSUE_DUPLICATE_KEY]
+        assert len(duplicates) == 1
+        issue = duplicates[0]
+        # 金额按数值比：源数据是 float 时 Decimal 会保留 ``450.0`` 这种写法，
+        # 与报告里其他金额列口径一致，不在这里单独规范化
+        assert Decimal(issue["amount"]) == Decimal("450.00"), "报的应该是重复那笔的金额"
+        assert "其中 2 笔金额完全相同" in issue["detail"]
+        assert "（450" in issue["detail"]
+        assert "3 笔金额完全相同" not in issue["detail"], "整组 3 行并不都同额"
 
 
 class TestOutputShape:

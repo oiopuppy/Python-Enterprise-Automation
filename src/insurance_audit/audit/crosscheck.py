@@ -421,18 +421,24 @@ def _resolve_keys(
     return DEFAULT_KEY_FIELDS
 
 
-def _identical_count(rows: Sequence[_SideRow]) -> int:
-    """同一组里金额完全相同的最大笔数
+def _top_repeat(rows: Sequence[_SideRow]) -> tuple[int, Optional[Decimal]]:
+    """同一组里出现次数最多的那个金额，以及它出现的笔数
 
     一对多本身是正常形态（分期打款、退票后重付），只有「多笔金额一模一样」
-    才像重复记账。返回 1 表示没有同额重复。
+    才像重复记账。返回 ``(笔数, 金额)``；笔数为 1 表示没有同额重复，金额为
+    ``None`` 表示这一侧没有有效行。
+
+    金额必须跟着笔数一起返回：组里可能是 ``100 + 450 + 450``，此时「重复」
+    的是 450、重复 2 笔，而不是「3 笔全是 100」—— 只报笔数会把原因说错，
+    也会把不相干的那笔金额当成本组金额（实测过这个错法）。
     """
     if not rows:
-        return 0
+        return 0, None
     counts: dict[Decimal, int] = {}
     for row in rows:
         counts[row.amount] = counts.get(row.amount, 0) + 1
-    return max(counts.values())
+    amount = max(counts, key=lambda value: counts[value])
+    return counts[amount], amount
 
 
 def _match_type(ledger_count: int, payment_count: int) -> str:
@@ -474,6 +480,16 @@ def _status_conflict_note(ledger: Sequence[_SideRow], payment: Sequence[_SideRow
     if ledger_closed and payment_failed:
         return "台账已结案但流水失败/退票"
     return "台账退票/失败但流水已赔付"
+
+
+def _status_comparable(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> bool:
+    """两侧都填了状态才有「一致 / 不一致」可言
+
+    状态列存在、但某一侧整组都是空值（没填）时，原实现直接判 ``not conflict``
+    为 True，输出「状态一致=是」—— 其实一行都没比较过，等于给了一份它给不出
+    的保证。这时应当报 ``—``。
+    """
+    return any(row.status for row in ledger) and any(row.status for row in payment)
 
 
 def crosscheck(
@@ -518,6 +534,21 @@ def crosscheck(
         and status_field in payment_df.columns
         else []
     )
+    if status_field is not None and not status_columns:
+        # 状态列只在一边有（或都没有）时状态检查会静默关闭，报告里只剩「—」，
+        # 看起来像「检查过了没问题」。这是配置问题，必须说出来。
+        missing_sides = [
+            side
+            for side, frame in (("台账", ledger_df), ("流水", payment_df))
+            if status_field not in frame.columns
+        ]
+        logger.warning(
+            "状态检查已关闭：%s 里没有状态列 %r（台账列=%s，流水列=%s）",
+            " 和 ".join(missing_sides),
+            status_field,
+            list(ledger_df.columns),
+            list(payment_df.columns),
+        )
     _require_columns(ledger_df, list(key_fields) + [ledger_amount_field])
     _require_columns(payment_df, list(key_fields) + [payment_amount_field])
 
@@ -607,7 +638,7 @@ def crosscheck(
             else:
                 result = RESULT_AMOUNT_DIFF
                 note_parts.append(f"金额差超出容差 {tolerance}")
-            if status_columns:
+            if status_columns and _status_comparable(ledger_items, payment_items):
                 conflict = _status_conflict(ledger_items, payment_items)
                 status_consistent = not conflict
                 if conflict and result == RESULT_MATCHED:
@@ -632,8 +663,8 @@ def crosscheck(
         # 同侧多行：金额不等的合并是正常形态（分期打款、退票重付），只写进说明；
         # 只有「多行金额完全相同」才当成重复记账嫌疑报进 issues，避免把正常分期
         # 也标成疑点、把真疑点淹没
-        ledger_repeat = _identical_count(ledger_items)
-        payment_repeat = _identical_count(payment_items)
+        ledger_repeat, ledger_repeat_amount = _top_repeat(ledger_items)
+        payment_repeat, payment_repeat_amount = _top_repeat(payment_items)
         if ledger_repeat > 1:
             issues.append(
                 {
@@ -641,10 +672,11 @@ def crosscheck(
                     "row": ledger_items[0].row_no,
                     "reason": ISSUE_DUPLICATE_KEY,
                     "key": _format_key(key, ledger_items[0].display),
-                    "amount": str(ledger_amount),
+                    "amount": str(ledger_repeat_amount),
                     "detail": (
-                        f"同一主键在台账出现 {len(ledger_items)} 次、金额完全相同"
-                        f"（{ledger_items[0].amount}），可能是重复记账，请人工确认"
+                        f"同一主键在台账出现 {len(ledger_items)} 次，其中 "
+                        f"{ledger_repeat} 笔金额完全相同（{ledger_repeat_amount}），"
+                        f"可能是重复记账，请人工确认"
                     ),
                 }
             )
@@ -658,10 +690,11 @@ def crosscheck(
                     "row": payment_items[0].row_no,
                     "reason": ISSUE_DUPLICATE_KEY,
                     "key": _format_key(key, payment_items[0].display),
-                    "amount": str(payment_amount),
+                    "amount": str(payment_repeat_amount),
                     "detail": (
-                        f"同一主键在流水出现 {len(payment_items)} 次、金额完全相同"
-                        f"（{payment_items[0].amount}），可能是重复付款或同额分期，请人工确认"
+                        f"同一主键在流水出现 {len(payment_items)} 次，其中 "
+                        f"{payment_repeat} 笔金额完全相同（{payment_repeat_amount}），"
+                        f"可能是重复付款或同额分期，请人工确认"
                     ),
                 }
             )
