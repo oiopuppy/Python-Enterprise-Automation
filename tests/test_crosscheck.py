@@ -293,6 +293,38 @@ class TestIdentity:
         assert summary.diff_amount_total == Decimal("0.00")
         self._assert_identity(summary)
 
+    def test_identity_catches_dropped_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """恒等式要能真的失败：分组漏掉一行时必须报不成立
+
+        左边用逐行原始金额求和、右边用分组累计，两边不是同一个来源；
+        改动前 diff_total 就是逐组差值累加，identity_gap 按构造恒为 0。
+        """
+        from insurance_audit.audit import crosscheck as module
+
+        ledger = _ledger(
+            [
+                {"保单号": "CL9900001", "赔案号": "C1", "实际赔付金额": 100.00},
+                {"保单号": "CL9900002", "赔案号": "C2", "实际赔付金额": 200.00},
+            ]
+        )
+        payment = _payment([{"保单号": "CL9900001", "赔案号": "C1", "实际赔付金额": 100.00}])
+
+        original_group = module._group
+
+        def _lossy_group(rows: object) -> object:
+            grouped = original_group(rows)  # type: ignore[arg-type]
+            for key in list(grouped):  # type: ignore[call-overload]
+                if "CL9900002" in key:  # type: ignore[operator]
+                    grouped.pop(key)  # type: ignore[attr-defined]
+            return grouped
+
+        monkeypatch.setattr(module, "_group", _lossy_group)
+
+        _, summary = crosscheck(ledger, payment)
+
+        assert summary.identity_holds is False
+        assert summary.identity_gap == Decimal("200.00")
+
 
 class TestOneToMany:
     """一对多分摊与合并分组"""
@@ -600,6 +632,28 @@ class TestStatusConsistency:
         assert detail.iloc[0]["状态一致"] == "—"
         assert summary.status_diff_groups == 0
 
+    def test_single_side_rows_report_no_status_verdict(self) -> None:
+        """只有一侧有行时谈不上「状态一致」，必须报 — 而不是「是」"""
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 300.00,
+                    "案件状态": "已结案",
+                }
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900999", "赔案号": "C999", "实际赔付金额": 700.00, "案件状态": "成功"}]
+        )
+
+        detail, _ = crosscheck(ledger, payment)
+
+        by_result = {row["对账结果"]: row for _, row in detail.iterrows()}
+        assert by_result[RESULT_LEDGER_ONLY]["状态一致"] == "—"
+        assert by_result[RESULT_PAYMENT_ONLY]["状态一致"] == "—"
+
 
 class TestKeyConfiguration:
     """主键与容差可配"""
@@ -661,6 +715,34 @@ class TestKeyConfiguration:
         assert summary.key_fields == ["保单号"]
         assert len(detail) == 1, "同一保单的两个赔案要合成一组"
         assert detail.iloc[0]["台账笔数"] == 2
+
+    def test_profile_without_primary_key_keeps_default_double_key(self) -> None:
+        """只覆盖容差的 profile 不能顺手把主键降成单键
+
+        ``MappingProfile.primary_key`` 默认是空元组表示「未配置」；若默认值写成
+        ``("保单号",)``，任何 profile 都会被当成显式声明单键，同一保单的两个赔案
+        就被合并成一组、金额也被加成 300 去比。
+        """
+        ledger = _ledger(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00},
+                {"保单号": "CL9900100", "赔案号": "C002", "实际赔付金额": 200.00},
+            ]
+        )
+        payment = _payment(
+            [
+                {"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 100.00},
+                {"保单号": "CL9900100", "赔案号": "C002", "实际赔付金额": 200.00},
+            ]
+        )
+        profile = MappingProfile(tolerance_absolute=Decimal("1"))
+
+        detail, summary = crosscheck(ledger, payment, profile=profile)
+
+        assert profile.primary_key == (), "默认必须是「未配置」"
+        assert summary.key_fields == ["保单号", "赔案号"]
+        assert len(detail) == 2
+        assert summary.matched_groups == 2
 
     def test_missing_default_key_raises_instead_of_degrading(self) -> None:
         """缺一个默认键时直接报错，不能静默降级成单键把配置问题伪装成金额差"""

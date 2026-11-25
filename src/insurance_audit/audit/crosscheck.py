@@ -386,12 +386,12 @@ def _resolve_keys(
     profile: Optional[MappingProfile],
     keys: Optional[Sequence[str]],
 ) -> tuple[str, ...]:
-    """决定主键：显式传入 > profile 声明 > 默认「保单号 + 赔案号」
+    """决定主键：显式传入 > profile 显式声明 > 默认「保单号 + 赔案号」
 
-    profile 只要**显式声明了** ``primary_key`` 就用它（含最常见的单键
-    ``["保单号"]``）。不能拿「是否等于默认值」当哨兵：默认值本身就是
-    ``("保单号",)``，那样 profile 里写 ``["保单号"]`` 会被当成「没配」而跳过，
-    要按保单汇总的用户就永远配不出来。
+    只有 profile **显式声明了非空** ``primary_key`` 才用它（含最常见的单键
+    ``["保单号"]``）。``MappingProfile.primary_key`` 的默认值是空元组，
+    表示「未配置」；否则只改容差、encoding 的 profile 也会把主键悄悄降成单键，
+    同一保单的多个赔案就被合并成一组。
     """
     if keys:
         return tuple(keys)
@@ -493,7 +493,7 @@ def crosscheck(
         ledger_df: 台账（已按 profile 映射成标准列）
         payment_df: 支付流水（同上）
         profile: 映射 profile；声明了 ``tolerance_absolute`` / ``tolerance_ratio``
-            和 ``primary_key`` 时生效。可传实例、文件路径或 None（读 ``DATA_PROFILE``）
+            和非空 ``primary_key`` 时生效（空 ``primary_key`` 表示未配置，回落默认键）
         keys: 主键字段；留空按 profile.primary_key → ``保单号 + 赔案号`` 推断
         ledger_amount_field: 台账侧金额列，默认 ``实际赔付金额``
         payment_amount_field: 流水侧金额列，默认 ``实际赔付金额``
@@ -582,6 +582,11 @@ def crosscheck(
     ledger_only_amount = Decimal("0.00")
     payment_only_amount = Decimal("0.00")
 
+    # 恒等式的左边必须独立求和，不能也用逐组差值累加：
+    # 那样 identity_gap 按构造永远为 0，测试也就永远不可能失败。
+    ledger_row_total = sum((row.amount for row in ledger_rows), start=Decimal("0.00"))
+    payment_row_total = sum((row.amount for row in payment_rows), start=Decimal("0.00"))
+
     for key in ordered_keys:
         ledger_items = ledger_groups.get(key, [])
         payment_items = payment_groups.get(key, [])
@@ -614,12 +619,13 @@ def crosscheck(
                     )
         elif ledger_items:
             result = RESULT_LEDGER_ONLY
-            status_consistent = True if status_columns else None
+            # 只有一侧有行，谈不上「状态一致」，输出 — 而不是「是」
+            status_consistent = None
             note_parts.append("台账有记录、流水无对应付款")
             ledger_only_amount += ledger_amount
         else:
             result = RESULT_PAYMENT_ONLY
-            status_consistent = True if status_columns else None
+            status_consistent = None
             note_parts.append("流水有付款、台账无对应记录（可能是账外赔付）")
             payment_only_amount += payment_amount
 
@@ -699,13 +705,16 @@ def crosscheck(
         )
         detail_rows.append(detail_row)
 
-    identity_gap = ledger_total - payment_total - diff_total
+    # 恒等式两边各自独立求：左边是逐行原始金额，右边是分组累计 + 逐组差值。
+    # 分组若漏行、重复计数，两边就会不等 —— 否则拿 diff_total 回头验自己，
+    # identity_gap 按构造永远是 0，这条校验等于没有。
+    identity_gap = ledger_row_total - payment_row_total - diff_total
     identity_holds = identity_gap == 0
     if not identity_holds:
         logger.error(
-            "多源对账恒等式不成立: Σ台账=%s, Σ流水=%s, Σ差异=%s, 差额=%s",
-            ledger_total,
-            payment_total,
+            "多源对账恒等式不成立: 逐行Σ台账=%s, 逐行Σ流水=%s, 分组Σ差异=%s, 差额=%s",
+            ledger_row_total,
+            payment_row_total,
             diff_total,
             identity_gap,
         )
