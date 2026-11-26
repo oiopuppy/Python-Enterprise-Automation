@@ -75,24 +75,26 @@ DEFAULT_AMOUNT_FIELD = "实际赔付金额"
 DEFAULT_STATUS_FIELD = "案件状态"
 
 # 状态一致性：两侧对「钱到底付出去没有」的判断相反
-# 台账侧「已结案」的写法 → 台账说钱该付/已付
-LEDGER_CLOSED_STATES: tuple[str, ...] = ("已结案", "结案", "已赔付", "赔付完成", "已完成")
-# 流水侧「已付成功」的写法
-PAYMENT_CLOSED_STATES: tuple[str, ...] = (
+#
+# 词表必须**两侧共用同一套**：要对的是「钱付没付」，台账写「已结案」、流水写
+# 「成功」说的本来是同一件事，各存一份不对称的词表就会漏判 —— 台账写「已支付」
+# 或「成功」、流水写「结案」都落在词表外，真状态差被静默算成「一致」（实测）。
+CLOSED_STATES: tuple[str, ...] = (
+    "已结案",
+    "结案",
+    "已赔付",
+    "赔付完成",
+    "已完成",
+    "完成",
     "成功",
     "已成功",
     "已支付",
     "支付成功",
-    "已赔付",
-    "完成",
-    "已完成",
 )
-# 台账侧的退票/失败（台账挂着「钱退回来了」）
-LEDGER_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
-# 流水侧的退票/失败
-PAYMENT_FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
-# 两侧「钱还没出去」的中间态：台账说已结案、流水还停在待支付，同样是状态差
-LEDGER_PENDING_STATES: tuple[str, ...] = (
+# 退票/失败/冲正：钱退回来了或压根没付出去
+FAILED_STATES: tuple[str, ...] = ("失败", "退票", "已退票", "冲正", "已冲正", "已失败")
+# 「钱还没出去」的中间态：台账说已结案、流水还停在待支付，同样是状态差
+PENDING_STATES: tuple[str, ...] = (
     "待支付",
     "未支付",
     "待处理",
@@ -101,14 +103,32 @@ LEDGER_PENDING_STATES: tuple[str, ...] = (
     "在途",
     "已受理",
 )
-PAYMENT_PENDING_STATES: tuple[str, ...] = (
-    "待支付",
-    "未支付",
-    "待处理",
-    "处理中",
-    "审核中",
-    "在途",
-    "已受理",
+
+# 旧的六个别名：曾经台账/流水各一份，现在统一口径，保留名字避免外部引用断掉
+LEDGER_CLOSED_STATES = CLOSED_STATES
+PAYMENT_CLOSED_STATES = CLOSED_STATES
+LEDGER_FAILED_STATES = FAILED_STATES
+PAYMENT_FAILED_STATES = FAILED_STATES
+LEDGER_PENDING_STATES = PENDING_STATES
+PAYMENT_PENDING_STATES = PENDING_STATES
+
+# 状态归类：只有这三类才谈得上「一致 / 不一致」
+STATUS_KIND_CLOSED = "closed"
+STATUS_KIND_FAILED = "failed"
+STATUS_KIND_PENDING = "pending"
+
+_CLOSED_SET = frozenset(CLOSED_STATES)
+_FAILED_SET = frozenset(FAILED_STATES)
+_PENDING_SET = frozenset(PENDING_STATES)
+
+# 判「否」的四种组合：两个极端相反 + 「账上结了钱没付」+「钱付了账上没销」
+_STATUS_CONFLICT_PAIRS = frozenset(
+    {
+        (STATUS_KIND_CLOSED, STATUS_KIND_FAILED),
+        (STATUS_KIND_FAILED, STATUS_KIND_CLOSED),
+        (STATUS_KIND_CLOSED, STATUS_KIND_PENDING),
+        (STATUS_KIND_PENDING, STATUS_KIND_CLOSED),
+    }
 )
 
 # 结果表列顺序（报告层按这个顺序落 sheet）
@@ -477,6 +497,30 @@ def _match_type(ledger_count: int, payment_count: int) -> str:
     return MATCH_MANY_TO_MANY
 
 
+def _status_kind(status: str) -> Optional[str]:
+    """把状态取值归成 closed / failed / pending；不认识返回 None"""
+    if status in _CLOSED_SET:
+        return STATUS_KIND_CLOSED
+    if status in _FAILED_SET:
+        return STATUS_KIND_FAILED
+    if status in _PENDING_SET:
+        return STATUS_KIND_PENDING
+    return None
+
+
+def _final_status(rows: Sequence[_SideRow]) -> str:
+    """组内「最终状态」：取最后一条填了状态的记录
+
+    不能用 ``any()`` 扫全组：退票后重付的组是「退票 + 已结案」，扫到那条
+    退票就把整组当成 failed，跟流水已经成功的最终结果对不上，正常的退票重付
+    反被报成状态差（实测三种形态全中）。重付/冲正后一切以最后一笔为准。
+    """
+    for row in reversed(rows):
+        if row.status:
+            return row.status
+    return ""
+
+
 def _status_conflict(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> bool:
     """状态差：两侧对「这笔钱到底付没付」说法相反
 
@@ -490,49 +534,45 @@ def _status_conflict(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) ->
     issue #32 的原文是「台账『已结案』但流水『退票/失败』，**或反之**」，
     只判一个方向会把后者漏成「一致」；后两个方向是实务里最常见的两种错，
     只判「极端相反」的组合同样会漏成「一致」（实测：已结案 + 待支付
-    原先报「状态一致=是」）。
+    原先报「状态一致=是」）。比较用的是组内**最终状态**，见 ``_final_status``。
     """
-    ledger_closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
-    ledger_failed = any(row.status in LEDGER_FAILED_STATES for row in ledger)
-    ledger_pending = any(row.status in LEDGER_PENDING_STATES for row in ledger)
-    payment_closed = any(row.status in PAYMENT_CLOSED_STATES for row in payment)
-    payment_failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
-    payment_pending = any(row.status in PAYMENT_PENDING_STATES for row in payment)
-    return (
-        (ledger_closed and payment_failed)
-        or (ledger_failed and payment_closed)
-        or (ledger_closed and payment_pending)
-        or (ledger_pending and payment_closed)
-    )
+    ledger_kind = _status_kind(_final_status(ledger))
+    payment_kind = _status_kind(_final_status(payment))
+    if ledger_kind is None or payment_kind is None:
+        return False
+    return (ledger_kind, payment_kind) in _STATUS_CONFLICT_PAIRS
 
 
 def _status_conflict_note(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> str:
     """给出能读懂的状态差说明（哪个方向）"""
-    ledger_closed = any(row.status in LEDGER_CLOSED_STATES for row in ledger)
-    ledger_failed = any(row.status in LEDGER_FAILED_STATES for row in ledger)
-    ledger_pending = any(row.status in LEDGER_PENDING_STATES for row in ledger)
-    payment_closed = any(row.status in PAYMENT_CLOSED_STATES for row in payment)
-    payment_failed = any(row.status in PAYMENT_FAILED_STATES for row in payment)
-    payment_pending = any(row.status in PAYMENT_PENDING_STATES for row in payment)
-    if ledger_closed and payment_failed:
-        return "台账已结案但流水失败/退票"
-    if ledger_failed and payment_closed:
-        return "台账退票/失败但流水已赔付"
-    if ledger_closed and payment_pending:
-        return "台账已结案但流水还没付（待支付/处理中）"
-    if ledger_pending and payment_closed:
-        return "台账还挂着待支付/处理中，但流水已成功（账上未销账）"
-    return "两侧状态不一致"
+    ledger_final = _final_status(ledger)
+    payment_final = _final_status(payment)
+    ledger_kind = _status_kind(ledger_final)
+    payment_kind = _status_kind(payment_final)
+    if ledger_kind == STATUS_KIND_CLOSED and payment_kind == STATUS_KIND_FAILED:
+        return f"台账已结案但流水失败/退票（台账={ledger_final}，流水={payment_final}）"
+    if ledger_kind == STATUS_KIND_FAILED and payment_kind == STATUS_KIND_CLOSED:
+        return f"台账退票/失败但流水已赔付（台账={ledger_final}，流水={payment_final}）"
+    if ledger_kind == STATUS_KIND_CLOSED and payment_kind == STATUS_KIND_PENDING:
+        return f"台账已结案但流水还没付（台账={ledger_final}，流水={payment_final}）"
+    if ledger_kind == STATUS_KIND_PENDING and payment_kind == STATUS_KIND_CLOSED:
+        return f"台账还挂着待支付/处理中但流水已成功（账上未销账，台账={ledger_final}，流水={payment_final}）"
+    return f"两侧状态不一致（台账={ledger_final}，流水={payment_final}）"
 
 
 def _status_comparable(ledger: Sequence[_SideRow], payment: Sequence[_SideRow]) -> bool:
-    """两侧都填了状态才有「一致 / 不一致」可言
+    """两侧都有「能归类」的状态，才有「一致 / 不一致」可言
 
-    状态列存在、但某一侧整组都是空值（没填）时，原实现直接判 ``not conflict``
-    为 True，输出「状态一致=是」—— 其实一行都没比较过，等于给了一份它给不出
-    的保证。这时应当报 ``—``。
+    两种情况都会让状态检查失效，都必须报 ``—`` 而不是「是」：
+
+    - 状态列存在但某一侧整组都是空值（没填）—— 原实现直接判 ``not conflict``
+      为 True，等于给了一份它给不出的保证；
+    - 状态取值不在词表里（如「复核中」「部分赔付」，各家的写法收不全）——
+      归类不出来就判断不了，同样不能说一致。
     """
-    return any(row.status for row in ledger) and any(row.status for row in payment)
+    ledger_status = _final_status(ledger)
+    payment_status = _final_status(payment)
+    return _status_kind(ledger_status) is not None and _status_kind(payment_status) is not None
 
 
 def crosscheck(
@@ -609,6 +649,21 @@ def crosscheck(
         amount_field=payment_amount_field,
         status_field=status_columns[0] if status_columns else None,
     )
+
+    if status_columns:
+        # 词表收不全各家的写法（「复核中」「部分赔付」…），归类不出来的取值会让
+        # 那几组判不了「状态一致」。不能静默当成一致，把认不出的写法说出来。
+        unknown: set[str] = set()
+        for side, rows in (("台账", ledger_rows), ("流水", payment_rows)):
+            for row in rows:
+                if row.status and _status_kind(row.status) is None:
+                    unknown.add(f"{side}:{row.status}")
+        if unknown:
+            logger.warning(
+                "状态检查遇到未收录的状态写法（这些组会报「状态一致=—」）：%s；"
+                "如需覆盖请补 CLOSED_STATES / FAILED_STATES / PENDING_STATES",
+                "、".join(sorted(unknown)),
+            )
 
     absolute_tolerance = (
         tolerance_absolute

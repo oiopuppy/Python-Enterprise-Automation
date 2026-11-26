@@ -782,6 +782,197 @@ class TestStatusConsistency:
         assert detail.iloc[0]["状态一致"] == "—"
         assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
 
+    def test_ledger_paid_word_counts_as_closed(self) -> None:
+        """台账写「已支付」、流水写「退票」—— 也是钱没付出去账上结了
+
+        原实现给台账、流水各存一份不对称的词表：台账侧没有「已支付/成功/
+        支付成功」，流水侧没有「结案/赔付完成」。于是台账写「已支付」+ 流水写
+        「退票」这种真状态差被静默算成「一致」（实测）。
+        """
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "已支付",
+                }
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "退票"}]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        row = detail.iloc[0]
+        assert row["对账结果"] == RESULT_STATUS_DIFF, "台账=已支付、流水=退票 是状态差"
+        assert row["状态一致"] == "否"
+        assert summary.status_diff_groups == 1
+        assert "已支付" in str(row["说明"])
+
+    def test_ledger_success_word_counts_as_closed(self) -> None:
+        ledger = _ledger(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "成功"}]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "退票"}]
+        )
+
+        detail, _ = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["对账结果"] == RESULT_STATUS_DIFF
+        assert detail.iloc[0]["状态一致"] == "否"
+
+    def test_payment_settled_word_counts_as_closed(self) -> None:
+        """流水写「结案」、台账写「已结案」—— 两家写法不同，指同一件事，应算一致"""
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "已结案",
+                }
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "结案"}]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["对账结果"] == RESULT_MATCHED
+        assert detail.iloc[0]["状态一致"] == "是"
+        assert summary.status_diff_groups == 0
+
+    def test_payment_settled_word_against_pending_ledger(self) -> None:
+        """台账还挂着待支付、流水写「结案」—— 词表不对称时这条也会漏掉"""
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 400.00,
+                    "案件状态": "待支付",
+                }
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 400.00, "案件状态": "结案"}]
+        )
+
+        detail, _ = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["对账结果"] == RESULT_STATUS_DIFF
+        assert "未销账" in str(detail.iloc[0]["说明"])
+
+    def test_unknown_status_value_reports_no_verdict(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """状态写法收录不全（复核中/部分赔付…）时判不了，必须报 — 并说出来
+
+        原实现把不在词表里的取值当成「不冲突」，于是「复核中」+「退票」、
+        「异常」+「成功」全都报「状态一致=是」、既不告警也不进 issues ——
+        报告看起来像查过了没问题。
+        """
+        for unknown in ("复核中", "部分赔付", "已核赔", "异常"):
+            ledger = _ledger(
+                [
+                    {
+                        "保单号": "CL9900100",
+                        "赔案号": "C001",
+                        "实际赔付金额": 400.00,
+                        "案件状态": unknown,
+                    }
+                ]
+            )
+            payment = _payment(
+                [
+                    {
+                        "保单号": "CL9900100",
+                        "赔案号": "C001",
+                        "实际赔付金额": 400.00,
+                        "案件状态": "退票",
+                    }
+                ]
+            )
+
+            with caplog.at_level("WARNING"):
+                detail, summary = crosscheck(ledger, payment)
+
+            assert detail.iloc[0]["状态一致"] == "—", f"「{unknown}」归类不出来，不能说一致"
+            assert summary.status_diff_groups == 0
+        assert any("未收录的状态写法" in record.message for record in caplog.records)
+        assert any("复核中" in record.message for record in caplog.records)
+
+    def test_refund_then_repay_is_not_status_diff(self) -> None:
+        """退票后重付：组里先退票、后已结案，最终付成了 —— 不算状态差
+
+        原来用 ``any()`` 扫整组，扫到那条退票就把整组当 failed，正常的退票重付
+        反被报成状态差（实测三种形态全中）。应当以组内最终状态为准。
+        """
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 500.00,
+                    "案件状态": "退票",
+                },
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 500.00,
+                    "案件状态": "已结案",
+                },
+            ]
+        )
+        payment = _payment(
+            [{"保单号": "CL9900100", "赔案号": "C001", "实际赔付金额": 1000.00, "案件状态": "成功"}]
+        )
+
+        detail, summary = crosscheck(ledger, payment)
+
+        row = detail.iloc[0]
+        assert row["对账结果"] == RESULT_MATCHED, "退票重付后最终付成，金额也相等"
+        assert row["状态一致"] == "是"
+        assert summary.status_diff_groups == 0
+
+    def test_final_failed_after_success_is_status_diff(self) -> None:
+        """反向：流水先成功后退票，最终是退票 —— 以最后一笔为准，这才是状态差"""
+        ledger = _ledger(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 1000.00,
+                    "案件状态": "已结案",
+                }
+            ]
+        )
+        payment = _payment(
+            [
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 500.00,
+                    "案件状态": "成功",
+                },
+                {
+                    "保单号": "CL9900100",
+                    "赔案号": "C001",
+                    "实际赔付金额": 500.00,
+                    "案件状态": "退票",
+                },
+            ]
+        )
+
+        detail, _ = crosscheck(ledger, payment)
+
+        assert detail.iloc[0]["状态一致"] == "否"
+        assert "退票" in str(detail.iloc[0]["说明"])
+
 
 class TestKeyConfiguration:
     """主键与容差可配"""
