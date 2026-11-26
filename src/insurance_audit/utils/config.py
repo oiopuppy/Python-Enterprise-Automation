@@ -149,7 +149,7 @@ class MappingProfile:
     字段说明：
         role: 文件角色，ledger（台账）/ payment（支付流水）/ core（核心系统）
         columns: 标准字段 -> 源列名；不在其中的标准字段按同名匹配
-        primary_key: 主键组合（标准字段名）
+        primary_key: 主键组合（标准字段名）；空元组表示未配置，由调用方用默认键
         timeline: 时间轴字段（标准字段名，按业务先后排序）
         date_formats: 日期解析格式，按顺序尝试
         amount_unit: 金额单位，yuan（元）/ wan（万元）
@@ -161,7 +161,7 @@ class MappingProfile:
 
     role: str = "ledger"
     columns: dict[str, str] = field(default_factory=dict)
-    primary_key: tuple[str, ...] = ("保单号",)
+    primary_key: tuple[str, ...] = ()
     timeline: tuple[str, ...] = ()
     date_formats: tuple[str, ...] = ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d", "%Y年%m月%d日")
     amount_unit: str = "yuan"
@@ -253,7 +253,7 @@ def _profile_from_mapping(data: dict[str, Any], source: str) -> MappingProfile:
         return MappingProfile(
             role=str(data.get("role", "ledger")),
             columns={str(k): str(v) for k, v in columns_raw.items()},
-            primary_key=_as_tuple(data.get("primary_key")) or ("保单号",),
+            primary_key=_as_tuple(data.get("primary_key")),
             timeline=_as_tuple(data.get("timeline")),
             date_formats=_as_tuple(data.get("date_formats"))
             or ("%Y-%m-%d", "%Y/%m/%d", "%Y%m%d", "%Y年%m月%d日"),
